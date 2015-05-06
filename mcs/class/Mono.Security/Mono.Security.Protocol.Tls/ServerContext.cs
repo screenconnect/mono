@@ -86,7 +86,8 @@ namespace Mono.Security.Protocol.Tls
 			// Build the chain for the certificate and if the chain is correct, add all certificates 
 			// (except the root certificate [FIRST ONE] ... the client is supposed to know that one,
 			// otherwise the whole concept of a trusted chain doesn't work out ... 
-			MonoX509.X509Chain chain = new MonoX509.X509Chain (MonoX509.X509StoreManager.IntermediateCACertificates);
+			MonoX509.X509Chain chain = new MonoX509.X509Chain ();
+			chain.LoadCertificates(MonoX509.X509StoreManager.IntermediateCACertificates);
 
 			if (chain.Build (cert)) {
 				for (int j = chain.Chain.Count - 1; j > 0; j--)
