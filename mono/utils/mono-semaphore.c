@@ -49,7 +49,7 @@ mono_sem_timedwait (MonoSemType *sem, guint32 timeout_ms, gboolean alertable)
 		return mono_sem_wait (sem, alertable);
 
 #ifdef USE_MACH_SEMA
-	memset (&t, 0, sizeof (TIMESPEC));
+	memset (&t, 0, sizeof (struct timeval));
 #else
 	gettimeofday (&t, NULL);
 #endif
