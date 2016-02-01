@@ -194,7 +194,6 @@ namespace Mono.Data.SqlExpressions {
 									       terminator,
 									       sb.ToString ())
 								);
-Console.WriteLine("parsed out string: " + sb);
 			return sb.ToString ();			
 		}
 
