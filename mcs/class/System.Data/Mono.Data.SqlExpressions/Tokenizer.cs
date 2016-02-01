@@ -142,9 +142,9 @@ namespace Mono.Data.SqlExpressions {
 				return double.Parse (str);
 		}
 
-		private char ProcessEscapes(char c)
+		private char ProcessEscapes(char c, bool backslashesEscape)
 		{
-			if (c == '\\') {
+			if (backslashesEscape && c == '\\') {
 				if (MoveNext())
 					c = Current ();
 				else
@@ -172,28 +172,21 @@ namespace Mono.Data.SqlExpressions {
 			return c;
 		}
 
-		private string ReadString (char terminator)
-		{
-			return ReadString (terminator, false /* canEscape */);
-		}
-
-		private string ReadString (char terminator, 
-					   bool canEscape // twice the terminator is not a terminator
-					   )
+		private string ReadString (char terminator, bool canEscape, bool backslashesEscape)
 		{
 			bool terminated = false;
 			StringBuilder sb = new StringBuilder ();
 			while (MoveNext ()) {
 				if (Current () == terminator) {
 					if (Next () == terminator) {
-						sb.Append (ProcessEscapes (Current ()));
+						sb.Append (ProcessEscapes (Current (), backslashesEscape));
 						MoveNext ();
 						continue;
 					}
 					terminated = true;
 					break;
 				}
-				sb.Append (ProcessEscapes (Current ()));
+				sb.Append (ProcessEscapes (Current (), backslashesEscape));
 			}
 			
 			if (! terminated)
@@ -201,6 +194,7 @@ namespace Mono.Data.SqlExpressions {
 									       terminator,
 									       sb.ToString ())
 								);
+Console.WriteLine("parsed out string: " + sb);
 			return sb.ToString ();			
 		}
 
@@ -212,7 +206,7 @@ namespace Mono.Data.SqlExpressions {
 			char next;
 			string ret;
 			while ((next = Next ()) == '_' || Char.IsLetterOrDigit (next) || next == '\\') {
-				sb.Append (ProcessEscapes (next));				
+				sb.Append (ProcessEscapes (next, true));				
 				if (!MoveNext ())
 					break;
 			}
@@ -322,17 +316,17 @@ namespace Mono.Data.SqlExpressions {
 				return Token.GT;
 
 			case '[':
-				val = ReadString (']');
+				val = ReadString (']', false, true);
 				return Token.Identifier;
 
 			case '#':
-				string date = ReadString ('#');
+				string date = ReadString ('#', false, false);
 				val = DateTime.Parse (date);
 				return Token.DateLiteral;
 
 			case '\'':
 			case '\"':
-				val = ReadString (cur, true);
+				val = ReadString (cur, true, false);
 				return Token.StringLiteral;
 
 			default:
