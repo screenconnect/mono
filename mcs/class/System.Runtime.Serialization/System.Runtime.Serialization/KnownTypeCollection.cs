@@ -208,6 +208,7 @@ namespace System.Runtime.Serialization
 			xs_predefined_types.Add ("unsignedShort", typeof (ushort));
 			xs_predefined_types.Add ("unsignedByte", typeof (byte));
 			xs_predefined_types.Add ("positiveInteger", typeof (decimal));
+			xs_predefined_types.Add ("guid", typeof (Guid));
 
 			xs_predefined_types.Add ("anyType", typeof (object));
 		}
