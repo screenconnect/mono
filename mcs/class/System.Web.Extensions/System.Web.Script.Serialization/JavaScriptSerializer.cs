@@ -156,6 +156,10 @@ namespace System.Web.Script.Serialization
 
 				return ConvertToObject ((IDictionary<string, object>) obj, targetType);
 			}
+
+			if (obj.GetType().IsArray)
+				return ConvertToList (new ArrayList(obj as IList), targetType);
+
 			if (obj is ArrayList)
 				return ConvertToList ((ArrayList) obj, targetType);
 
