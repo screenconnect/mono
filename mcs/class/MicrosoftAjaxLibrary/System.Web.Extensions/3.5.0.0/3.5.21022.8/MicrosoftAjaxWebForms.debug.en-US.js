@@ -749,6 +749,18 @@ Sys.WebForms.PageRequestManager = function Sys$WebForms$PageRequestManager() {
                 if ((type === 'text') ||
                     (type === 'password') ||
                     (type === 'hidden') ||
+                    (type === 'color') ||
+                    (type === 'date') ||
+                    (type === 'datetime-local') ||
+                    (type === 'email') ||
+                    (type === 'month') ||
+                    (type === 'number') ||
+                    (type === 'range') ||
+                    (type === 'search') ||
+                    (type === 'tel') ||
+                    (type === 'time') ||
+                    (type === 'url') ||
+                    (type === 'week') ||
                     (((type === 'checkbox') || (type === 'radio')) && element.checked)) {
                     formBody.append(encodeURIComponent(name));
                     formBody.append('=');
