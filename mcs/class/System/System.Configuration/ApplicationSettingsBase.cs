@@ -352,8 +352,8 @@ namespace System.Configuration {
 						      false, false);
 
 
-			if (providerService != null)
-				setting.Provider = providerService.GetSettingsProvider (setting);
+			if (providerService != null && provider == null)
+				provider = setting.Provider = providerService.GetSettingsProvider (setting);
 
 			if (provider == null) {
 				if (local_provider == null) {
