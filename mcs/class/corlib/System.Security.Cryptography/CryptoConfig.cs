@@ -222,7 +222,7 @@ public partial class CryptoConfig {
 	// new (2.0) X509 Chain
 	private const string nameX509Chain = "X509Chain";
 	private const string defaultX509Chain = defaultNamespace + "X509Certificates.X509Chain, " + Consts.AssemblySystem;
-#if NET_4_0
+
 	// AES
 	const string system_core_assembly = ", System.Core, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089";
 	const string nameAES_1 = "AES";
@@ -273,7 +273,7 @@ public partial class CryptoConfig {
 	// SHA512 provider
 	const string nameSHA512Provider = "System.Security.Cryptography.SHA512CryptoServiceProvider";
 	const string defaultSHA512Provider = "System.Security.Cryptography.SHA512CryptoServiceProvider" + system_core_assembly;
-#endif
+
 	static CryptoConfig () 
 	{
 		// lock(this) is bad
@@ -440,6 +440,7 @@ public partial class CryptoConfig {
 		oid.Add (nameSHA512, oidSHA512);
 		oid.Add (nameSHA512a, oidSHA512);
 		oid.Add (nameSHA512c, oidSHA512);
+		oid.Add (nameSHA512Cng, oidSHA512);
 
 		oid.Add (nameRIPEMD160, oidRIPEMD160);
 		oid.Add (nameRIPEMD160a, oidRIPEMD160);
