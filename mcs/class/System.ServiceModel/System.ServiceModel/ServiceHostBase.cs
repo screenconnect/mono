@@ -346,7 +346,7 @@ namespace System.ServiceModel
 				return;
 			ServiceBehaviorElement behavior = ConfigUtil.BehaviorsSection.ServiceBehaviors [configurationName];
 			if (behavior == null) {
-				if (throwIfNotFound)
+				if (configurationName != string.Empty && throwIfNotFound)
 					throw new ArgumentException (String.Format ("Service behavior configuration '{0}' was not found", configurationName));
 				return;
 			}
