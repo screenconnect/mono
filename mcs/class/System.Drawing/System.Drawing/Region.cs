@@ -642,7 +642,7 @@ namespace System.Drawing
 				throw new ArgumentNullException ("regionHandle");
 
 			Status status = Status.Ok;
-			if (GDIPlus.RunningOnUnix ()) {
+			if (GDIPlus.RuntimeInfo.RunningOnUnix ()) {
 				// for libgdiplus HRGN == GpRegion* 
 				status = GDIPlus.GdipDeleteRegion (regionHandle);
 			} else {

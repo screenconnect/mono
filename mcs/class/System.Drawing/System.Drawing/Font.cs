@@ -216,7 +216,7 @@ namespace System.Drawing
 				return(result);
 			}
 
-			if (GDIPlus.RunningOnUnix ()) {
+			if (GDIPlus.RuntimeInfo.RunningOnUnix ()) {
 				// If we're on Unix we use our private gdiplus API to avoid Wine 
 				// dependencies in S.D
 				Status s = GDIPlus.GdipCreateFontFromHfont (hfont, out newObject, ref lf);
@@ -268,7 +268,7 @@ namespace System.Drawing
 			if (fontObject == IntPtr.Zero)
 				throw new ArgumentException (Locale.GetText ("Object has been disposed."));
 
-			if (GDIPlus.RunningOnUnix ())
+			if (GDIPlus.RuntimeInfo.RunningOnUnix ())
 				return fontObject;
 
 			// win32 specific code
@@ -579,7 +579,7 @@ namespace System.Drawing
 
 		public static Font FromLogFont (object lf)
 		{
-			if (GDIPlus.RunningOnUnix ())
+			if (GDIPlus.RuntimeInfo.RunningOnUnix ())
 				return FromLogFont(lf, IntPtr.Zero);
 
 			// win32 specific code
@@ -595,7 +595,7 @@ namespace System.Drawing
 
 		public void ToLogFont (object logFont)
 		{
-			if (GDIPlus.RunningOnUnix ()) {
+			if (GDIPlus.RuntimeInfo.RunningOnUnix ()) {
 				// Unix - We don't have a window we could associate the DC with
 				// so we use an image instead
 				using (Bitmap img = new Bitmap (1, 1, Imaging.PixelFormat.Format32bppArgb)) {

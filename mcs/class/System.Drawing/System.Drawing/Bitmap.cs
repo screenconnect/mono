@@ -68,7 +68,7 @@ namespace System.Drawing
 		internal Bitmap(IntPtr ptr, Stream stream)
 		{
 			// under Win32 stream is owned by SD/GDI+ code
-			if (GDIPlus.RunningOnWindows ())
+			if (GDIPlus.RuntimeInfo.RunningOnWindows ())
 				this.stream = stream;
 			nativeObject = ptr;
 		}
@@ -145,7 +145,7 @@ namespace System.Drawing
 
 			nativeObject = InitFromStream (s);
 			// under Win32 stream is owned by SD/GDI+ code
-			if (GDIPlus.RunningOnWindows ())
+			if (GDIPlus.RuntimeInfo.RunningOnWindows ())
 				stream = s;
 		}
 

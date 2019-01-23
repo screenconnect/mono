@@ -54,7 +54,7 @@ namespace System.Drawing.Imaging {
 		internal Metafile (IntPtr ptr, Stream stream)
 		{
 			// under Win32 stream is owned by SD/GDI+ code
-			if (GDIPlus.RunningOnWindows ())
+			if (GDIPlus.RuntimeInfo.RunningOnWindows ())
 				this.stream = stream;
 			nativeObject = ptr;
 		}
@@ -65,7 +65,7 @@ namespace System.Drawing.Imaging {
 				throw new ArgumentException ("stream");
 
 			Status status;
-			if (GDIPlus.RunningOnUnix ()) {
+			if (GDIPlus.RuntimeInfo.RunningOnUnix ()) {
 				// With libgdiplus we use a custom API for this, because there's no easy way
 				// to get the Stream down to libgdiplus. So, we wrap the stream with a set of delegates.
 				GDIPlus.GdiPlusStreamHelper sh = new GDIPlus.GdiPlusStreamHelper (stream, false);
@@ -273,7 +273,7 @@ namespace System.Drawing.Imaging {
 				throw new NullReferenceException ("stream");
 
 			Status status = Status.NotImplemented;
-			if (GDIPlus.RunningOnUnix ()) {
+			if (GDIPlus.RuntimeInfo.RunningOnUnix ()) {
 				// With libgdiplus we use a custom API for this, because there's no easy way
 				// to get the Stream down to libgdiplus. So, we wrap the stream with a set of delegates.
 				GDIPlus.GdiPlusStreamHelper sh = new GDIPlus.GdiPlusStreamHelper (stream, false);
@@ -294,7 +294,7 @@ namespace System.Drawing.Imaging {
 				throw new NullReferenceException ("stream");
 
 			Status status = Status.NotImplemented;
-			if (GDIPlus.RunningOnUnix ()) {
+			if (GDIPlus.RuntimeInfo.RunningOnUnix ()) {
 				// With libgdiplus we use a custom API for this, because there's no easy way
 				// to get the Stream down to libgdiplus. So, we wrap the stream with a set of delegates.
 				GDIPlus.GdiPlusStreamHelper sh = new GDIPlus.GdiPlusStreamHelper (stream, false);
@@ -369,7 +369,7 @@ namespace System.Drawing.Imaging {
 			try {
 				Status status;
 
-				if (GDIPlus.RunningOnUnix ()) {
+				if (GDIPlus.RuntimeInfo.RunningOnUnix ()) {
 					// With libgdiplus we use a custom API for this, because there's no easy way
 					// to get the Stream down to libgdiplus. So, we wrap the stream with a set of delegates.
 					GDIPlus.GdiPlusStreamHelper sh = new GDIPlus.GdiPlusStreamHelper (stream, false);
