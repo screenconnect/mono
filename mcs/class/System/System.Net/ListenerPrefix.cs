@@ -53,6 +53,7 @@ namespace System.Net {
 			get { return addresses; }
 			set { addresses = value; }
 		}
+
 		public bool Secure {
 			get { return secure; }
 		}
