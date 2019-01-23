@@ -77,6 +77,18 @@ namespace System.Web.UI
 			htmlInputControls.Add ("RADIO", typeof (HtmlInputRadioButton));
 			htmlInputControls.Add ("TEXT", typeof (HtmlInputText));
 			htmlInputControls.Add ("PASSWORD", typeof (HtmlInputPassword));
+			htmlInputControls.Add ("COLOR", typeof(HtmlInputText));
+			htmlInputControls.Add ("DATE", typeof(HtmlInputText));
+			htmlInputControls.Add ("DATETIME-LOCAL", typeof(HtmlInputText));
+			htmlInputControls.Add ("EMAIL", typeof(HtmlInputText));
+			htmlInputControls.Add ("MONTH", typeof(HtmlInputText));
+			htmlInputControls.Add ("NUMBER", typeof(HtmlInputText));
+			htmlInputControls.Add ("RANGE", typeof(HtmlInputText));
+			htmlInputControls.Add ("SEARCH", typeof(HtmlInputText));
+			htmlInputControls.Add ("TEL", typeof(HtmlInputText));
+			htmlInputControls.Add ("TIME", typeof(HtmlInputText));
+			htmlInputControls.Add ("URL", typeof(HtmlInputText));
+			htmlInputControls.Add ("WEEK", typeof(HtmlInputText));
 		}
 
 		public RootBuilder (TemplateParser parser)

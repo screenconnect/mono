@@ -568,10 +568,7 @@ namespace System.Web.Configuration {
 
 		public static object GetWebApplicationSection (string sectionName)
 		{
-			HttpContext ctx = HttpContext.Current;
-			HttpRequest req = ctx != null ? ctx.Request : null;
-			string applicationPath = req != null ? req.ApplicationPath : null;
-			return GetSection (sectionName, String.IsNullOrEmpty (applicationPath) ? String.Empty : applicationPath);
+			return GetSection (sectionName, HttpRuntime.AppDomainAppVirtualPath);
 		}
 
 		public static NameValueCollection AppSettings {

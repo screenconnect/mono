@@ -178,10 +178,8 @@ namespace System.Web.UI.WebControls {
 		{
 			// Why didn't msft just override RenderContents!?
 			RenderBeginTag (writer);
-			if (TextMode == TextBoxMode.MultiLine) {
-				writer.WriteLine ();
+			if (TextMode == TextBoxMode.MultiLine)
 				HttpUtility.HtmlEncode (Text, writer);
-			}
 			
 			RenderEndTag (writer);
 		}

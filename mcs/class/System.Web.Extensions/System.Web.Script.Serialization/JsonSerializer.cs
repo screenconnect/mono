@@ -457,7 +457,7 @@ namespace System.Web.Script.Serialization
 				value = MinimumJavaScriptDate;
 
 			long ticks = (value.Ticks - InitialJavaScriptDateTicks) / (long)10000;
-			StringBuilderExtensions.AppendCount (output, maxJsonLength, "\"\\/Date(" + ticks + ")\\/\"");
+			StringBuilderExtensions.AppendCount (output, maxJsonLength, "\"\\/Date(" + ticks.ToString (CultureInfo.InvariantCulture) + ")\\/\"");
 		}
 		
 		void WriteValue (StringBuilder output, IConvertible value)
