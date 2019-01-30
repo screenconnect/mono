@@ -46,7 +46,7 @@ MONO_VERSION_BUILD=`echo $VERSION | cut -d . -f 3`
 # There is no ordering of corlib versions, no old or new,
 # the runtime expects an exact match.
 #
-MONO_CORLIB_VERSION=F602B559-7639-49B6-97EE-C433CE7A56F2
+MONO_CORLIB_VERSION=CA4932AE-2294-4ECD-B863-BF98FDD84F33
 
 #
 # Put a quoted #define in config.h.
@@ -605,6 +605,7 @@ AC_CHECK_HEADERS(linux/magic.h)
 if test x$platform_android = xyes; then
 	AC_CHECK_HEADERS(machine/endian.h sys/endian.h)
 	AC_CHECK_HEADERS(android/legacy_signal_inlines.h, [have_android_signal_inlines=yes], [have_android_signal_inlines=no])
+	AC_CHECK_HEADERS(android/ndk-version.h)
 
 	# Make sure SIGRT{MIN,MAX} work - they will fail to work with unified headers if building for
 	# API level < 21 *and* android/legacy_signal_inlines.h doesn't declare (and define) the required
@@ -614,7 +615,8 @@ if test x$platform_android = xyes; then
 	if test x$have_android_signal_inlines = xyes; then
 		AC_MSG_CHECKING([Whether Android SIGRTMIN/SGRTMAX macros are valid])
 		AC_COMPILE_IFELSE([
-			AC_LANG_PROGRAM([#include <android/legacy_signal_inlines.h>],[
+			AC_LANG_PROGRAM([#include <signal.h>
+				#include <android/legacy_signal_inlines.h>],[
 				int i;
 				for (i = SIGRTMIN + 1; i < SIGRTMAX; ++i) {
 				}
@@ -2854,6 +2856,7 @@ if test x$host_win32 = xno; then
 	AC_CHECK_FUNCS(setpgid)
 	AC_CHECK_FUNCS(system)
 	AC_CHECK_FUNCS(fork execv execve)
+	AC_CHECK_FUNCS(waitpid)
 	AC_CHECK_FUNCS(accept4)
 	AC_CHECK_FUNCS(localtime_r)
 	AC_CHECK_FUNCS(mkdtemp)
@@ -4550,6 +4553,7 @@ AC_DEFINE(HAVE_UWP_WINAPI_SUPPORT, 0, [Don't use UWP Windows API support])
 AC_CHECK_FUNCS(strlcpy stpcpy strtok_r rewinddir vasprintf)
 AC_CHECK_FUNCS(getrlimit)
 AC_CHECK_FUNCS(fork execv execve)
+AC_CHECK_FUNCS(waitpid)
 
 AC_ARG_WITH([overridable-allocators], [  --with-overridable-allocators	allow g_*alloc/g_free to call custom allocators set via g_mem_set_vtable])
 
@@ -5140,6 +5144,26 @@ dnl **************
 AC_ARG_ENABLE(btls, [  --disable-btls             Disable the BoringTls provider], enable_btls=$enableval, enable_btls=$BTLS_SUPPORTED)
 AC_ARG_ENABLE(btls-lib, [  --disable-btls-lib             Disable building the BTLS native library], enable_btls_lib=$enableval, enable_btls_lib=$BTLS_SUPPORTED)
 AC_ARG_WITH(btls_android_ndk, [  --with-btls-android-ndk        Android NDK for BoringTls])
+AC_ARG_WITH(btls_android_api, [  --with-btls-android-api        Android NDK API level for BTLS build])
+AC_ARG_WITH(btls_android_cmake_toolchain, [  --with-btls-android-cmake-toolchain        Path to the cmake toolchain file for Android])
+AC_ARG_WITH(btls_android_ndk_asm_workaround, [  --with-btls-android-ndk-asm-workaround        Work around a problem with NDK r18+ clang compiler when compiling some AES assembly for ARM])
+
+if test "x$with_btls_android_api" = "x" ; then
+	case "$BTLS_PLATFORM" in
+		android-armv5)
+			with_btls_android_api=16" ;;
+		android-armv6)
+			with_btls_android_api=16" ;;
+		android-armv7)
+			with_btls_android_api=16 ;;
+		android-v8a)
+			with_btls_android_api=21 ;;
+		android-x86)
+			with_btls_android_api=16 ;;
+		android-x64)
+			with_btls_android_api=21 ;;
+	esac
+fi
 
 if test "x$enable_btls" = "xno"; then
    enable_btls_lib=no
@@ -5197,30 +5221,38 @@ if test "x$enable_btls" = "xyes"; then
 		esac
 		;;
 	android-armv5)
-		BTLS_CMAKE_ARGS="-DANDROID_ABI=\"armeabi\" -DANDROID_NATIVE_API_LEVEL=14"
+		BTLS_CMAKE_ARGS="-DANDROID_ABI=\"armeabi\" -DANDROID_NATIVE_API_LEVEL=$with_btls_android_api"
 		;;
 	android-armv6)
-		BTLS_CMAKE_ARGS="-DANDROID_ABI=\"armeabi\" -DANDROID_NATIVE_API_LEVEL=14"
+		BTLS_CMAKE_ARGS="-DANDROID_ABI=\"armeabi\" -DANDROID_NATIVE_API_LEVEL=$with_btls_android_api"
 		;;
 	android-armv7)
-		BTLS_CMAKE_ARGS="-DANDROID_ABI=\"armeabi-v7a\" -DANDROID_NATIVE_API_LEVEL=14"
+		BTLS_CMAKE_ARGS="-DANDROID_ABI=\"armeabi-v7a\" -DANDROID_NATIVE_API_LEVEL=$with_btls_android_api"
 		;;
 	android-v8a)
-		BTLS_CMAKE_ARGS="-DANDROID_ABI=\"arm64-v8a\" -DANDROID_NATIVE_API_LEVEL=21"
+		BTLS_CMAKE_ARGS="-DANDROID_ABI=\"arm64-v8a\" -DANDROID_NATIVE_API_LEVEL=$with_btls_android_api"
 		;;
 	android-x86)
-		BTLS_CMAKE_ARGS="-DANDROID_ABI=\"x86\" -DANDROID_NATIVE_API_LEVEL=14"
+		BTLS_CMAKE_ARGS="-DANDROID_ABI=\"x86\" -DANDROID_NATIVE_API_LEVEL=$with_btls_android_api"
 		;;
 	android-x64)
-		BTLS_CMAKE_ARGS="-DANDROID_ABI=\"x86_64\" -DANDROID_NATIVE_API_LEVEL=21"
+		BTLS_CMAKE_ARGS="-DANDROID_ABI=\"x86_64\" -DANDROID_NATIVE_API_LEVEL=$with_btls_android_api"
 		;;
 	*)
 		AC_MSG_ERROR(Invalid BTLS platform)
 	esac
 
 	if test "x$platform_android" = "xyes"; then
+	   	if test "x$with_btls_android_cmake_toolchain" = "x"; then
+		   with_btls_android_cmake_toolchain="$BTLS_ROOT/util/android-cmake/android.toolchain.cmake"
+		fi
+
+		if test "x$with_btls_android_ndk_asm_workaround" != "x"; then
+		   BTLS_CMAKE_ARGS="$BTLS_CMAKE_ARGS -DENABLE_NDK_ARM_WORKAROUND=ON"
+		fi
+
 		btls_android=yes
-		BTLS_CMAKE_ARGS="$BTLS_CMAKE_ARGS -DCMAKE_TOOLCHAIN_FILE=$BTLS_ROOT/util/android-cmake/android.toolchain.cmake"
+		BTLS_CMAKE_ARGS="$BTLS_CMAKE_ARGS -DCMAKE_TOOLCHAIN_FILE=$with_btls_android_cmake_toolchain"
 		if test "x$with_btls_android_ndk" != "x"; then
 			BTLS_CMAKE_ARGS="$BTLS_CMAKE_ARGS -DANDROID_NDK=\"$with_btls_android_ndk\""
 		else
