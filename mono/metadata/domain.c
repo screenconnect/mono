@@ -779,7 +779,9 @@ mono_init_internal (const char *filename, const char *exe_filename, const char *
 
 	mono_defaults.threadpool_perform_wait_callback_method = mono_class_get_method_from_name_checked (
 		mono_defaults.threadpool_wait_callback_class, "PerformWaitCallback", 0, 0, error);
-	mono_error_assert_ok (error);
+	
+	// for vs 2010 compatibility. Not necessary here.
+	//mono_error_assert_ok (error);
 
 	mono_defaults.console_class = mono_class_try_load_from_name (
 		mono_defaults.corlib, "System", "Console");
