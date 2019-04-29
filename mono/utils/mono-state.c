@@ -259,15 +259,16 @@ mono_state_alloc_mem (MonoStateMem *mem, long tag, size_t size)
 	mem->size = size;
 
 	mem->handle = g_open (name, O_RDWR | O_CREAT | O_EXCL, S_IWUSR | S_IRUSR | S_IRGRP | S_IROTH);
-	if (mem->handle < 1)
-		return FALSE;
+	if (mem->handle < 1) {
+		mem->mem = (gpointer *) mmap (0, mem->size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	} else {
+		lseek (mem->handle, mem->size, SEEK_SET);
+		g_write (mem->handle, "", 1);
 
-	lseek (mem->handle, mem->size, SEEK_SET);
-	g_write (mem->handle, "", 1);
-
-	mem->mem = (gpointer *) mmap (0, mem->size, PROT_READ | PROT_WRITE, MAP_SHARED, mem->handle, 0);
+		mem->mem = (gpointer *) mmap (0, mem->size, PROT_READ | PROT_WRITE, MAP_SHARED, mem->handle, 0);
+	}
 	if (mem->mem == GINT_TO_POINTER (-1))
-		g_assert_not_reached ();
+		return FALSE;
 
 	return TRUE;
 }
@@ -545,20 +546,56 @@ mono_native_state_add_frames (MonoStateWriter *writer, int num_frames, MonoFrame
 
 	mono_state_writer_printf(writer, "[\n");
 
-	// Where you are: everything works but
-	// the add_frame method
-
-	mono_native_state_add_frame (writer, &frames [0]);
-	  for (int i = 1; i < num_frames; ++i) {
-	  	mono_state_writer_printf(writer, ",\n");
-	  	mono_native_state_add_frame (writer, &frames [i]);
-	  }
+	for (int i = 0; i < num_frames; ++i) {
+		if (i > 0)
+			mono_state_writer_printf(writer, ",\n");
+		mono_native_state_add_frame (writer, &frames [i]);
+	}
 	mono_state_writer_printf(writer, "\n");
 
 	mono_state_writer_indent (writer);
 	writer->indent--;
 	mono_state_writer_printf(writer, "]");
 }
+
+static void
+mono_native_state_add_managed_exc (MonoStateWriter *writer, MonoExcSummary *exc)
+{
+	mono_state_writer_indent (writer);
+	mono_state_writer_printf(writer, "{\n");
+	writer->indent++;
+
+	assert_has_space (writer);
+	mono_state_writer_indent (writer);
+	mono_state_writer_object_key (writer, "type");
+	mono_state_writer_printf(writer, "\"%s.%s\",\n", m_class_get_name_space (exc->managed_exc_type), m_class_get_name (exc->managed_exc_type));
+
+	mono_native_state_add_frames (writer, exc->num_managed_frames, exc->managed_frames, "managed_frames");
+
+	mono_state_writer_indent (writer);
+	writer->indent--;
+	mono_state_writer_printf(writer, "}\n");
+}
+
+static void
+mono_native_state_add_managed_excs (MonoStateWriter *writer, int num_excs, MonoExcSummary *excs)
+{
+	mono_state_writer_indent (writer);
+	mono_state_writer_object_key (writer, "exceptions");
+
+	mono_state_writer_printf(writer, "[\n");
+
+	for (int i = 0; i < num_excs; ++i) {
+		if (i > 0)
+			mono_state_writer_printf(writer, ",\n");
+		mono_native_state_add_managed_exc (writer, &excs [i]);
+	}
+
+	mono_state_writer_indent (writer);
+	writer->indent--;
+	mono_state_writer_printf(writer, "]");
+}
+
 
 void
 mono_native_state_add_thread (MonoStateWriter *writer, MonoThreadSummary *thread, MonoContext *ctx, gboolean first_thread, gboolean crashing_thread)
@@ -619,17 +656,14 @@ mono_native_state_add_thread (MonoStateWriter *writer, MonoThreadSummary *thread
 		mono_state_writer_printf(writer, "\"%s\"", thread->name);
 	}
 
-	if (thread->managed_exc_type) {
-		mono_state_writer_printf(writer, ",\n");
-		assert_has_space (writer);
-		mono_state_writer_indent (writer);
-		mono_state_writer_object_key (writer, "managed_exception_type");
-		mono_state_writer_printf(writer, "\"%s.%s\"", m_class_get_name_space (thread->managed_exc_type), m_class_get_name (thread->managed_exc_type));
-	}
-
 	if (ctx) {
 		mono_state_writer_printf(writer, ",\n");
 		mono_native_state_add_ctx (writer, ctx);
+	}
+
+	if (thread->num_exceptions > 0) {
+		mono_state_writer_printf(writer, ",\n");
+		mono_native_state_add_managed_excs (writer, thread->num_exceptions, thread->exceptions);
 	}
 
 	if (thread->num_managed_frames > 0) {
