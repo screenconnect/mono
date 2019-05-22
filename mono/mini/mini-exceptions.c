@@ -358,28 +358,30 @@ static gboolean show_native_addresses = TRUE;
 static gboolean show_native_addresses = FALSE;
 #endif
 
-static _Unwind_Reason_Code
-build_stack_trace (struct _Unwind_Context *frame_ctx, void *state)
-{
-	MonoDomain *domain = mono_domain_get ();
-	uintptr_t ip = _Unwind_GetIP (frame_ctx);
+// Commented to get rid of a dependency on GCC library.
+// static _Unwind_Reason_Code
+// build_stack_trace (struct _Unwind_Context *frame_ctx, void *state)
+// {
+// 	MonoDomain *domain = mono_domain_get ();
+// 	uintptr_t ip = _Unwind_GetIP (frame_ctx);
 
-	if (show_native_addresses || mono_jit_info_table_find (domain, (char*)ip)) {
-		GList **trace_ips = (GList **)state;
-		*trace_ips = g_list_prepend (*trace_ips, (gpointer)ip);
-	}
+// 	if (show_native_addresses || mono_jit_info_table_find (domain, (char*)ip)) {
+// 		GList **trace_ips = (GList **)state;
+// 		*trace_ips = g_list_prepend (*trace_ips, (gpointer)ip);
+// 	}
 
-	return _URC_NO_REASON;
-}
+// 	return _URC_NO_REASON;
+// }
 
 static GSList*
 get_unwind_backtrace (void)
 {
-	GSList *ips = NULL;
+	// Commented to get rid of a dependency on GCC library.
+	// GSList *ips = NULL;
+	// _Unwind_Backtrace (build_stack_trace, &ips);
+	// return g_slist_reverse (ips);
 
-	_Unwind_Backtrace (build_stack_trace, &ips);
-
-	return g_slist_reverse (ips);
+	return NULL;
 }
 
 #else
@@ -3280,28 +3282,32 @@ mono_handle_native_crash (const char *signal, void *ctx, MONO_SIG_HANDLER_INFO_T
 	 * with ones which have a greater chance of working.
 	 */
 
-	g_async_safe_printf("\n=================================================================\n");
-	g_async_safe_printf("\tNative Crash Reporting\n");
-	g_async_safe_printf("=================================================================\n");
-	g_async_safe_printf("Got a %s while executing native code. This usually indicates\n", signal);
-	g_async_safe_printf("a fatal error in the mono runtime or one of the native libraries \n");
-	g_async_safe_printf("used by your application.\n");
-	g_async_safe_printf("=================================================================\n");
-	mono_dump_native_crash_info (signal, ctx, info);
+	/* this was causing all kinds of chaos when the process is trying to abort and recover
+	 * removing this allows us to abort and restart the process reliably
+	 */
+
+	// g_async_safe_printf("\n=================================================================\n");
+	// g_async_safe_printf("\tNative Crash Reporting\n");
+	// g_async_safe_printf("=================================================================\n");
+	// g_async_safe_printf("Got a %s while executing native code. This usually indicates\n", signal);
+	// g_async_safe_printf("a fatal error in the mono runtime or one of the native libraries \n");
+	// g_async_safe_printf("used by your application.\n");
+	// g_async_safe_printf("=================================================================\n");
+	// mono_dump_native_crash_info (signal, ctx, info);
 
 	/* !jit_tls means the thread was not registered with the runtime */
 	// This must be below the native crash dump, because we can't safely
 	// do runtime state probing after we have walked the managed stack here.
-	if (jit_tls && mono_thread_internal_current () && ctx) {
-		g_async_safe_printf ("\n=================================================================\n");
-		g_async_safe_printf ("\tManaged Stacktrace:\n");
-		g_async_safe_printf ("=================================================================\n");
+	// if (jit_tls && mono_thread_internal_current () && ctx) {
+	// 	g_async_safe_printf ("\n=================================================================\n");
+	// 	g_async_safe_printf ("\tManaged Stacktrace:\n");
+	// 	g_async_safe_printf ("=================================================================\n");
 
-		MonoContext mctx;
-		mono_sigctx_to_monoctx (ctx, &mctx);
-		mono_walk_stack_full (print_stack_frame_signal_safe, &mctx, mono_domain_get (), jit_tls, mono_get_lmf (), MONO_UNWIND_LOOKUP_IL_OFFSET, NULL, TRUE);
-		g_async_safe_printf ("=================================================================\n");
-	}
+	// 	MonoContext mctx;
+	// 	mono_sigctx_to_monoctx (ctx, &mctx);
+	// 	mono_walk_stack_full (print_stack_frame_signal_safe, &mctx, mono_domain_get (), jit_tls, mono_get_lmf (), MONO_UNWIND_LOOKUP_IL_OFFSET, NULL, TRUE);
+	// 	g_async_safe_printf ("=================================================================\n");
+	// }
 
 #ifdef MONO_ARCH_USE_SIGACTION
 	struct sigaction sa;
@@ -3316,7 +3322,6 @@ mono_handle_native_crash (const char *signal, void *ctx, MONO_SIG_HANDLER_INFO_T
 	 * fail to raise SIGABRT */
 	g_assert (sigaction (SIGILL, &sa, NULL) != -1);
 #endif
-
 	mono_post_native_crash_handler (signal, ctx, info, mono_do_crash_chaining);
 }
 
@@ -3752,23 +3757,24 @@ throw_exception (MonoObject *ex, gboolean rethrow)
 
 	if (!rethrow) {
 #ifdef MONO_ARCH_HAVE_UNWIND_BACKTRACE
-		GList *l, *ips = NULL;
-		GList *trace;
+		// Commented to get rid of a dependency on GCC library.
+		// GList *l, *ips = NULL;
+		// GList *trace;
 
-		_Unwind_Backtrace (build_stack_trace, &ips);
-		/* The list contains ip-gshared info pairs */
-		trace = NULL;
-		ips = g_list_reverse (ips);
-		for (l = ips; l; l = l->next) {
-			trace = g_list_append (trace, l->data);
-			trace = g_list_append (trace, NULL);
-			trace = g_list_append (trace, NULL);
-		}
-		MonoArray *ips_arr = mono_glist_to_array (trace, mono_defaults.int_class, error);
-		mono_error_assert_ok (error);
-		MONO_OBJECT_SETREF (mono_ex, trace_ips, ips_arr);
-		g_list_free (l);
-		g_list_free (trace);
+		// _Unwind_Backtrace (build_stack_trace, &ips);
+		// /* The list contains ip-gshared info pairs */
+		// trace = NULL;
+		// ips = g_list_reverse (ips);
+		// for (l = ips; l; l = l->next) {
+		// 	trace = g_list_append (trace, l->data);
+		// 	trace = g_list_append (trace, NULL);
+		// 	trace = g_list_append (trace, NULL);
+		// }
+		// MonoArray *ips_arr = mono_glist_to_array (trace, mono_defaults.int_class, error);
+		// mono_error_assert_ok (error);
+		// MONO_OBJECT_SETREF (mono_ex, trace_ips, ips_arr);
+		// g_list_free (l);
+		// g_list_free (trace);
 #endif
 	}
 

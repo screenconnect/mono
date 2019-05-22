@@ -1157,6 +1157,7 @@ mono_post_native_crash_handler (const char *signal, void *ctx, MONO_SIG_HANDLER_
 #if defined (HOST_ANDROID)
 		exit (-1);
 #else
+		g_async_safe_printf("Aborting...\n");
 		abort ();
 #endif
 	}

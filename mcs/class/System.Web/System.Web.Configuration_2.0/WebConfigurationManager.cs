@@ -99,7 +99,6 @@ namespace System.Web.Configuration {
 			if (int.TryParse (Environment.GetEnvironmentVariable (CACHE_SIZE_OVERRIDING_KEY), out section_cache_size_override)) {
 				section_cache_size = section_cache_size_override;
 				size_overriden = true;
-				Console.WriteLine ("WebConfigurationManager's LRUcache Size overriden to: {0} (via {1})", section_cache_size_override, CACHE_SIZE_OVERRIDING_KEY);
 			}
 			sectionCache = new LruCache<int, object> (section_cache_size);
 			string eviction_warning = "WebConfigurationManager's LRUcache evictions count reached its max size";

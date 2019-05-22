@@ -718,6 +718,10 @@ namespace System.Web
 					if (header.IndexOf ("charset=") == -1 && !string.IsNullOrEmpty (charset)) {
 						header += "; charset=" + charset;
 					}
+					else if (header == "text/plain" || header == "text/html") {
+						// defaulting charset for text/plain and text/html content types if not specified
+						header += "; charset=" + Encoding.UTF8.WebName;
+					}
 				}
 				
 				write_headers.Add ("Content-Type", header);

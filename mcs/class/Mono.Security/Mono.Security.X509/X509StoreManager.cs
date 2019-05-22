@@ -31,6 +31,7 @@
 using System;
 using System.Collections;
 using System.IO;
+using System.Reflection;
 
 using Mono.Security.X509.Extensions;
 
@@ -47,10 +48,12 @@ namespace Mono.Security.X509 {
 		static private string _localMachinePath;
 		static private string _newUserPath;
 		static private string _newLocalMachinePath;
+		static private string _installedApplicationPath;
 		static private X509Stores _userStore;
 		static private X509Stores _machineStore;
 		static private X509Stores _newUserStore;
 		static private X509Stores _newMachineStore;
+		static private X509Stores _installedApplicationStore;
 
 		private X509StoreManager ()
 		{
@@ -104,6 +107,22 @@ namespace Mono.Security.X509 {
 			}
 		}
 
+		// Application level store path
+		internal static string InstalledApplicationPath {
+			get {
+				if (_installedApplicationPath == null) {
+					_installedApplicationPath = Path.Combine(
+						Directory.GetParent(Path.GetDirectoryName(Assembly.GetEntryAssembly().Location)).ToString(),
+						"App_Runtime",
+						"etc",
+						".mono",
+						"certs"
+					);
+				}
+				return _installedApplicationPath;
+			}
+		}
+
 		static public X509Stores CurrentUser {
 			get { 
 				if (_userStore == null)
@@ -140,6 +159,15 @@ namespace Mono.Security.X509 {
 			}
 		}
 
+		// Application level store, relative to where the application is installed.
+		static private X509Stores InstalledApplication {
+			get {
+				if (_installedApplicationStore == null)
+					_installedApplicationStore = new X509Stores (InstalledApplicationPath, false);
+				return _installedApplicationStore;
+			}
+		}
+
 		// Merged stores collections
 		// we need to look at both the user and the machine (entreprise)
 		// certificates/CRLs when building/validating a chain
@@ -149,6 +177,7 @@ namespace Mono.Security.X509 {
 				X509CertificateCollection intermediateCerts = new X509CertificateCollection ();
 				intermediateCerts.AddRange (CurrentUser.IntermediateCA.Certificates);
 				intermediateCerts.AddRange (LocalMachine.IntermediateCA.Certificates);
+				intermediateCerts.AddRange (InstalledApplication.IntermediateCA.Certificates);
 				return intermediateCerts; 
 			}
 		}
@@ -158,6 +187,7 @@ namespace Mono.Security.X509 {
 				ArrayList intermediateCRLs = new ArrayList ();
 				intermediateCRLs.AddRange (CurrentUser.IntermediateCA.Crls);
 				intermediateCRLs.AddRange (LocalMachine.IntermediateCA.Crls);
+				intermediateCRLs.AddRange (InstalledApplication.IntermediateCA.Crls);
 				return intermediateCRLs; 
 			}
 		}
@@ -167,6 +197,7 @@ namespace Mono.Security.X509 {
 				X509CertificateCollection trustedCerts = new X509CertificateCollection ();
 				trustedCerts.AddRange (CurrentUser.TrustedRoot.Certificates);
 				trustedCerts.AddRange (LocalMachine.TrustedRoot.Certificates);
+				trustedCerts.AddRange (InstalledApplication.TrustedRoot.Certificates);
 				return trustedCerts; 
 			}
 		}
@@ -176,6 +207,7 @@ namespace Mono.Security.X509 {
 				ArrayList trustedCRLs = new ArrayList ();
 				trustedCRLs.AddRange (CurrentUser.TrustedRoot.Crls);
 				trustedCRLs.AddRange (LocalMachine.TrustedRoot.Crls);
+				trustedCRLs.AddRange (InstalledApplication.TrustedRoot.Crls);
 				return trustedCRLs; 
 			}
 		}
@@ -185,6 +217,7 @@ namespace Mono.Security.X509 {
 				X509CertificateCollection untrustedCerts = new X509CertificateCollection ();
 				untrustedCerts.AddRange (CurrentUser.Untrusted.Certificates);
 				untrustedCerts.AddRange (LocalMachine.Untrusted.Certificates);
+				untrustedCerts.AddRange (InstalledApplication.Untrusted.Certificates);
 				return untrustedCerts; 
 			}
 		}

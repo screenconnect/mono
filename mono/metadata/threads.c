@@ -6068,6 +6068,7 @@ summarizer_supervisor_wait (SummarizerSupervisorState *state)
 #ifdef HAVE_KILL
 	g_async_safe_printf("Crash Reporter has timed out, sending SIGSEGV\n");
 	kill (state->pid, SIGSEGV);
+	g_async_safe_printf("Crash Reporter has timed out, sent SIGSEGV\n");
 #else
 	g_error ("kill () is not supported by this platform");
 #endif

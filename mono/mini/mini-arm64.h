@@ -169,9 +169,9 @@ typedef struct {
 
 #endif
 
-#if defined(TARGET_APPLETVOS) || defined(TARGET_IOS)
-#define MONO_ARCH_HAVE_UNWIND_BACKTRACE 1
-#endif
+// #if defined(TARGET_APPLETVOS) || defined(TARGET_IOS)
+// #define MONO_ARCH_HAVE_UNWIND_BACKTRACE 1
+// #endif
 
 /* Relocations */
 #define MONO_R_ARM64_B 1
