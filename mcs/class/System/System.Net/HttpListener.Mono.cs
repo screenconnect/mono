@@ -70,15 +70,34 @@ namespace System.Net {
 
 				// Actually load the certificate
 				try {
+					
 					string dirname = Environment.GetFolderPath (Environment.SpecialFolder.ApplicationData);
-					string path = Path.Combine (dirname, ".mono");
-					path = Path.Combine (path, "httplistener");
+					string path = Path.Combine (dirname, ".mono", "httplistener");
 					string cert_file = Path.Combine (path, String.Format ("{0}.cer", port));
-					if (!File.Exists (cert_file))
-						return null;
 					string pvk_file = Path.Combine (path, String.Format ("{0}.pvk", port));
-					if (!File.Exists (pvk_file))
+					
+					if (!File.Exists (cert_file) || !File.Exists (pvk_file))
+					{
+						Console.WriteLine("Failed to find cert in home store. Trying application store.");
+						// check application level cert store
+						dirname = Path.Combine(
+							Directory.GetParent(Path.GetDirectoryName(Assembly.GetEntryAssembly().Location)).ToString(),
+							"App_Runtime",
+							"etc"				
+						);
+						path = Path.Combine (dirname, ".mono", "httplistener");
+						cert_file = Path.Combine (path, String.Format ("{0}.cer", port));
+						pvk_file = Path.Combine (path, String.Format ("{0}.pvk", port));
+					}
+
+					if (!File.Exists (cert_file) || !File.Exists (pvk_file))
+					{
+						Console.WriteLine("Failed to find cert in application store.");
 						return null;
+					}
+
+					Console.WriteLine("Found cert.");
+
 					var cert = new X509Certificate2 (cert_file);
 					cert.PrivateKey = PrivateKey.CreateFromFile (pvk_file).RSA;
 					certificate = cert;
