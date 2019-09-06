@@ -79,7 +79,6 @@ namespace System.Net {
 					
 					if (!File.Exists (cert_file) || !File.Exists (pvk_file))
 					{
-						Console.WriteLine("Failed to find cert in home store. Trying application store.");
 						// check application level cert store
 						dirname = Path.Combine(
 							Directory.GetParent(Path.GetDirectoryName(Assembly.GetEntryAssembly().Location)).ToString(),
@@ -92,12 +91,7 @@ namespace System.Net {
 					}
 
 					if (!File.Exists (cert_file) || !File.Exists (pvk_file))
-					{
-						Console.WriteLine("Failed to find cert in application store.");
 						return null;
-					}
-
-					Console.WriteLine("Found cert.");
 
 					var cert = new X509Certificate2 (cert_file);
 					cert.PrivateKey = PrivateKey.CreateFromFile (pvk_file).RSA;
