@@ -277,6 +277,8 @@ namespace System.ServiceModel.Description
 			for (int i = 0; i < contractMethods.Length; ++i)
 			{
 				MethodInfo mi = contractMethods [i];
+				if (mi.ReturnType.IsAssignableFrom(typeof(System.Threading.Tasks.Task)))
+					continue;
 				OperationContractAttribute oca = GetOperationContractAttribute (mi);
 				if (oca == null)
 					continue;
