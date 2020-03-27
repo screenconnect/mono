@@ -52,7 +52,7 @@ namespace System.Web
 		string name;
 		CookieFlags flags = 0;
 		NameValueCollection values;
-		System.Web.SameSiteMode sameSite;
+		SameSiteMode sameSite;
 
 		[Obsolete]
 		internal HttpCookie (string name, string value, string path, DateTime expires)
@@ -140,7 +140,7 @@ namespace System.Web
 			}
 		}
 
-		public System.Web.SameSiteMode SameSite
+		public SameSiteMode SameSite
 		{
 			get
 			{
@@ -306,5 +306,11 @@ namespace System.Web
 				base.Set (name, value);
 			}
 		}
+	}
+	public enum SameSiteMode
+	{
+		None,
+		Lax,
+		Strict,
 	}
 }
