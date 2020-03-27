@@ -37,6 +37,7 @@ using System.Reflection;
 using System.Runtime.Serialization;
 using System.ServiceModel;
 using System.ServiceModel.Channels;
+using System.Threading.Tasks;
 
 namespace System.ServiceModel.Description
 {
@@ -277,8 +278,8 @@ namespace System.ServiceModel.Description
 			for (int i = 0; i < contractMethods.Length; ++i)
 			{
 				MethodInfo mi = contractMethods [i];
-				Console.WriteLine(mi.Name + ": " + mi.ReturnType + ": " + mi.ReturnType.IsSubclassOf(typeof(System.Threading.Tasks.Task)));
-				if (mi.ReturnType.IsAssignableFrom(typeof(System.Threading.Tasks.Task)))
+				Console.WriteLine(mi.Name + ": " + mi.ReturnType + ": sub: " + mi.ReturnType.IsSubclassOf(typeof(Task))  + ": assign: " + mi.ReturnType.IsAssignableFrom(typeof(Task)));
+				if (mi.ReturnType.IsAssignableFrom(typeof(Task)) || mi.ReturnType.IsSubclassOf(typeof(Task)))
 					continue;
 				OperationContractAttribute oca = GetOperationContractAttribute (mi);
 				if (oca == null)
