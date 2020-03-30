@@ -1383,6 +1383,7 @@
     <Compile Include="System.Web\BeginEventHandler.cs" />
     <Compile Include="System.Web\BrowserCapabilities.cs" />
     <Compile Include="System.Web\CapabilitiesLoader.cs" />
+    <Compile Include="System.Web\SameSiteMode.cs" />
     <Compile Include="System.Web\DefaultExceptionPageTemplate.cs" />
     <Compile Include="System.Web\DefaultHttpHandler.cs" />
     <Compile Include="System.Web\DynamicModuleManager.cs" />
