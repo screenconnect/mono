@@ -278,7 +278,6 @@ namespace System.ServiceModel.Description
 			for (int i = 0; i < contractMethods.Length; ++i)
 			{
 				MethodInfo mi = contractMethods [i];
-				Console.WriteLine(mi.Name + ": " + mi.ReturnType + ": sub: " + mi.ReturnType.IsSubclassOf(typeof(Task))  + ": assign: " + mi.ReturnType.IsAssignableFrom(typeof(Task)));
 				if (mi.ReturnType.IsAssignableFrom(typeof(Task)) || mi.ReturnType.IsSubclassOf(typeof(Task)))
 					continue;
 				OperationContractAttribute oca = GetOperationContractAttribute (mi);
