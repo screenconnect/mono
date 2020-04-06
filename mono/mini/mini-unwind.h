@@ -13,9 +13,9 @@
 
 #include "mini.h"
 
-/* This is the same as mgreg_t, except on 32 bit bit platforms with callee saved fp regs */
+/* This is the same as host_mgreg_t, except on 32 bit bit platforms with callee saved fp regs */
 #ifndef mono_unwind_reg_t
-#define mono_unwind_reg_t mgreg_t
+#define mono_unwind_reg_t host_mgreg_t
 #endif
 
 /*
@@ -181,7 +181,7 @@ gboolean
 mono_unwind_frame (guint8 *unwind_info, guint32 unwind_info_len, 
 				   guint8 *start_ip, guint8 *end_ip, guint8 *ip, guint8 **mark_locations,
 				   mono_unwind_reg_t *regs, int nregs,
-				   mgreg_t **save_locations, int save_locations_len,
+				   host_mgreg_t **save_locations, int save_locations_len,
 				   guint8 **out_cfa);
 
 void mono_unwind_init (void);
@@ -192,7 +192,7 @@ guint32 mono_cache_unwind_info (guint8 *unwind_info, guint32 unwind_info_len);
 
 guint8* mono_get_cached_unwind_info (guint32 index, guint32 *unwind_info_len);
 
-guint8* mono_unwind_decode_fde (guint8 *fde, guint32 *out_len, guint32 *code_len, MonoJitExceptionInfo **ex_info, guint32 *ex_info_len, gpointer **type_info, int *this_reg, int *this_offset) MONO_LLVM_INTERNAL;
+MONO_LLVM_INTERNAL guint8* mono_unwind_decode_fde (guint8 *fde, guint32 *out_len, guint32 *code_len, MonoJitExceptionInfo **ex_info, guint32 *ex_info_len, gpointer **type_info, int *this_reg, int *this_offset);
 
 /* Data retrieved from an LLVM Mono FDE entry */
 typedef struct {
@@ -203,11 +203,11 @@ typedef struct {
 	int this_offset;
 } MonoLLVMFDEInfo;
 
-void
-mono_unwind_decode_llvm_mono_fde (guint8 *fde, int fde_len, guint8 *cie, guint8 *code, MonoLLVMFDEInfo *res, MonoJitExceptionInfo *ei, gpointer *type_info, guint8 *unw_info) MONO_LLVM_INTERNAL;
+MONO_LLVM_INTERNAL void
+mono_unwind_decode_llvm_mono_fde (guint8 *fde, int fde_len, guint8 *cie, guint8 *code, MonoLLVMFDEInfo *res, MonoJitExceptionInfo *ei, gpointer *type_info, guint8 *unw_info);
 
 GSList* mono_unwind_get_cie_program (void);
 
-void mono_print_unwind_info (guint8 *unwind_info, int unwind_info_len) MONO_LLVM_INTERNAL;
+MONO_LLVM_INTERNAL void mono_print_unwind_info (guint8 *unwind_info, int unwind_info_len);
 
 #endif

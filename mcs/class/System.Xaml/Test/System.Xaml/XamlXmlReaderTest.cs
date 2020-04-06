@@ -36,6 +36,8 @@ using NUnit.Framework;
 
 using CategoryAttribute = NUnit.Framework.CategoryAttribute;
 
+using MonoTests.Helpers;
+
 namespace MonoTests.System.Xaml
 {
 	[TestFixture]
@@ -46,7 +48,7 @@ namespace MonoTests.System.Xaml
 		XamlReader GetReader (string filename)
 		{
 			const string ver = "net_4_x";
-			string xml = File.ReadAllText (Path.Combine ("Test/XmlFiles", filename)).Replace ("System.Xaml_test_net_4_0", ver + "_System.Xaml_test");
+			string xml = File.ReadAllText (TestResourceHelper.GetFullPathOfResource ("Test/XmlFiles/" + filename)).Replace ("System.Xaml_test_net_4_0", ver + "_System.Xaml_test");
 			return new XamlXmlReader (XmlReader.Create (new StringReader (xml)));
 		}
 
@@ -718,11 +720,18 @@ namespace MonoTests.System.Xaml
 			Read_ContentPropertyContainer (r);
 		}
 
+		[Test]
+		public void EscapedValue ()
+		{
+			var exception = (Exception)XamlServices.Load(new StringReader("<Exception xmlns=\"clr-namespace:System;assembly=mscorlib\" HelpLink=\"{}{123}\" />"));
+			Assert.AreEqual ("{123}", exception.HelpLink);
+		}
+
 		#region non-common tests
 		[Test]
 		public void Bug680385 ()
 		{
-			XamlServices.Load ("Test/XmlFiles/CurrentVersion.xaml");
+			XamlServices.Load (TestResourceHelper.GetFullPathOfResource ("Test/XmlFiles/CurrentVersion.xaml"));
 		}
 		#endregion
 	}

@@ -9,18 +9,19 @@
     <NoWarn>649,1699</NoWarn>
     <LangVersion>latest</LangVersion>
     <HostPlatform Condition=" '$(HostPlatform)' == '' and '$(OS)' == 'Windows_NT'">win32</HostPlatform>
-    <HostPlatform Condition=" '$(HostPlatform)' == '' and '$(OS)' == 'Unix' and $([System.IO.File]::Exists('/usr/lib/libc.dylib'))">darwin</HostPlatform>
+    <HostPlatform Condition=" '$(HostPlatform)' == '' and '$(OS)' == 'Unix' and $([System.IO.File]::Exists('/usr/lib/libc.dylib'))">macos</HostPlatform>
     <HostPlatform Condition=" '$(HostPlatform)' == '' and '$(OS)' == 'Unix'">linux</HostPlatform>
     <GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
     <NoStdLib>False</NoStdLib>
     <NoConfig>True</NoConfig>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <AssemblyName>mono-symbolicate</AssemblyName>
     <TargetFrameworkVersion>v4.6.2</TargetFrameworkVersion>
   </PropertyGroup>
-  <!-- Set AddAdditionalExplicitAssemblyReferences to false, otherwise if targetting .NET4.0, 
-  Microsoft.NETFramework.props will force a dependency on the assembly System.Core. This
-  is a problem to compile the Mono mscorlib.dll -->
   <PropertyGroup>
+    <!-- Set AddAdditionalExplicitAssemblyReferences to false, otherwise if targetting .NET4.0,
+    Microsoft.NETFramework.props will force a dependency on the assembly System.Core. This
+    is a problem to compile the Mono mscorlib.dll -->
     <AddAdditionalExplicitAssemblyReferences>false</AddAdditionalExplicitAssemblyReferences>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Platform)' == 'net_4_x' ">
@@ -31,7 +32,7 @@
   <PropertyGroup Condition=" '$(Platform)' == 'monodroid_tools' ">
     <OutputPath>./../../class/lib/monodroid_tools</OutputPath>
     <IntermediateOutputPath>./../../class/obj/$(AssemblyName)-monodroid_tools</IntermediateOutputPath>
-    <DefineConstants>NO_AUTHENTICODE;CECIL;NET_4_6;MONO;WIN_PLATFORM</DefineConstants>
+    <DefineConstants>NO_AUTHENTICODE;CECIL;NET_4_6;MONO;MONODROID_TOOLS;WIN_PLATFORM</DefineConstants>
   </PropertyGroup>
   <!-- @ALL_PROFILE_PROPERTIES@ -->
   <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
@@ -47,6 +48,7 @@
   </PropertyGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <!-- @BUILT_SOURCES@ -->
+  <!--Common files-->
   <ItemGroup>
     <Compile Include="..\..\..\external\cecil\Mono.Cecil.Cil\Code.cs" />
     <Compile Include="..\..\..\external\cecil\Mono.Cecil.Cil\CodeReader.cs" />
@@ -176,7 +178,7 @@
     <Compile Include="..\..\..\external\cecil\Mono.Security.Cryptography\CryptoService.cs" />
     <Compile Include="..\..\..\external\cecil\Mono\Disposable.cs" />
     <Compile Include="..\..\..\external\cecil\Mono\Empty.cs" />
-    <Compile Include="..\..\..\external\cecil\Mono\Type.cs" />
+    <Compile Include="..\..\..\external\cecil\Mono\MergeSort.cs" />
     <Compile Include="..\..\..\external\cecil\symbols\mdb\Mono.Cecil.Mdb\MdbReader.cs" />
     <Compile Include="..\..\..\external\cecil\symbols\mdb\Mono.Cecil.Mdb\MdbWriter.cs" />
     <Compile Include="..\..\..\external\cecil\symbols\mdb\Mono.CompilerServices.SymbolWriter\MonoSymbolFile.cs" />
@@ -201,6 +203,7 @@
     <Compile Include="..\..\..\external\cecil\symbols\pdb\Microsoft.Cci.Pdb\PdbFile.cs" />
     <Compile Include="..\..\..\external\cecil\symbols\pdb\Microsoft.Cci.Pdb\PdbFileHeader.cs" />
     <Compile Include="..\..\..\external\cecil\symbols\pdb\Microsoft.Cci.Pdb\PdbFunction.cs" />
+    <Compile Include="..\..\..\external\cecil\symbols\pdb\Microsoft.Cci.Pdb\PdbInfo.cs" />
     <Compile Include="..\..\..\external\cecil\symbols\pdb\Microsoft.Cci.Pdb\PdbLine.cs" />
     <Compile Include="..\..\..\external\cecil\symbols\pdb\Microsoft.Cci.Pdb\PdbLines.cs" />
     <Compile Include="..\..\..\external\cecil\symbols\pdb\Microsoft.Cci.Pdb\PdbReader.cs" />
@@ -226,7 +229,7 @@
     <Compile Include="SymbolManager.cs" />
     <Compile Include="symbolicate.cs" />
   </ItemGroup>
-  <ItemGroup></ItemGroup>
+  <!--End of common files-->
   <!-- @ALL_SOURCES@ -->
   <ItemGroup>
     <ProjectReference Include="../../class/System.XML/System.Xml.csproj" />
@@ -235,4 +238,10 @@
   </ItemGroup>
   <!-- @ALL_REFERENCES@ -->
   <!-- @ALL_RESOURCES@ -->
+  <PropertyGroup>
+    <!-- Force the pre-build event to run after references have been resolved. The default
+      behavior is to run them before resolving references, which can cause things like
+      culevel.exe to be used before they have been built. -->
+    <PreBuildEventDependsOn>ResolveReferences</PreBuildEventDependsOn>
+  </PropertyGroup>
 </Project>

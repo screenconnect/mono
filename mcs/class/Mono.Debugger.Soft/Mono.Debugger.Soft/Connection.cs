@@ -6,7 +6,6 @@ using System.Threading;
 using System.Collections.Generic;
 using System.Text;
 using System.Diagnostics;
-using Mono.Cecil.Metadata;
 
 namespace Mono.Debugger.Soft
 {
@@ -152,7 +151,8 @@ namespace Mono.Debugger.Soft
 	enum ValueTypeId {
 		VALUE_TYPE_ID_NULL = 0xf0,
 		VALUE_TYPE_ID_TYPE = 0xf1,
-		VALUE_TYPE_ID_PARENT_VTYPE = 0xf2
+		VALUE_TYPE_ID_PARENT_VTYPE = 0xf2,
+		VALUE_TYPE_ID_FIXED_ARRAY = 0xf3
 	}
 
 	[Flags]
@@ -216,10 +216,11 @@ namespace Mono.Debugger.Soft
 		public bool IsEnum; // For ElementType.ValueType
 		public long Id; /* For VALUE_TYPE_ID_TYPE */
 		public int Index; /* For VALUE_TYPE_PARENT_VTYPE */
+		public int FixedSize; 
 	}
 
 	class ModuleInfo {
-		public string Name, ScopeName, FQName, Guid;
+		public string Name, ScopeName, FQName, Guid, SourceLink;
 		public long Assembly;
 	}		
 
@@ -306,7 +307,14 @@ namespace Mono.Debugger.Soft
 		public bool Subclasses {
 			get; set;
 		}
+		public bool NotFilteredFeature {
+			get; set;
+		}
+		public bool EverythingElse {
+			get; set;
+		}
 	}
+
 
 	class AssemblyModifier : Modifier {
 		public long[] Assemblies {
@@ -367,6 +375,14 @@ namespace Mono.Debugger.Soft
 			get; set;
 		}
 
+		public string Dump {
+			get; set;
+		}
+
+		public ulong Hash {
+			get; set;
+		}
+
 		public EventInfo (EventType type, int req_id) {
 			EventType = type;
 			ReqId = req_id;
@@ -420,7 +436,7 @@ namespace Mono.Debugger.Soft
 		 * with newer runtimes, and vice versa.
 		 */
 		internal const int MAJOR_VERSION = 2;
-		internal const int MINOR_VERSION = 47;
+		internal const int MINOR_VERSION = 54;
 
 		enum WPSuspendPolicy {
 			NONE = 0,
@@ -463,7 +479,8 @@ namespace Mono.Debugger.Soft
 			EXCEPTION = 13,
 			KEEPALIVE = 14,
 			USER_BREAK = 15,
-			USER_LOG = 16
+			USER_LOG = 16,
+			CRASH = 17
 		}
 
 		enum ModifierKind {
@@ -508,7 +525,8 @@ namespace Mono.Debugger.Soft
 			GET_ID = 5,
 			/* Ditto */
 			GET_TID = 6,
-			SET_IP = 7
+			SET_IP = 7,
+			GET_ELAPSED_TIME = 8
 		}
 
 		enum CmdEventRequest {
@@ -524,7 +542,8 @@ namespace Mono.Debugger.Soft
 			GET_ENTRY_ASSEMBLY = 4,
 			CREATE_STRING = 5,
 			GET_CORLIB = 6,
-			CREATE_BOXED_VALUE = 7
+			CREATE_BOXED_VALUE = 7,
+			CREATE_BYTE_ARRAY = 8,
 		}
 
 		enum CmdAssembly {
@@ -539,7 +558,8 @@ namespace Mono.Debugger.Soft
 			GET_IS_DYNAMIC = 9,
 			GET_PDB_BLOB = 10,
 			GET_TYPE_FROM_TOKEN = 11,
-			GET_METHOD_FROM_TOKEN = 12
+			GET_METHOD_FROM_TOKEN = 12,
+			HAS_DEBUG_INFO = 13,
 		}
 
 		enum CmdModule {
@@ -591,6 +611,11 @@ namespace Mono.Debugger.Soft
 		[Flags]
 		enum BindingFlagsExtensions {
 			BINDING_FLAGS_IGNORE_CASE = 0x70000000,
+		}
+
+		enum MemberListTypeExtensions {
+			CaseSensitive = 1,
+			CaseInsensitive = 2
 		}
 
 		enum CmdStackFrame {
@@ -839,7 +864,6 @@ namespace Mono.Debugger.Soft
 
 			public ValueImpl ReadValue () {
 				ElementType etype = (ElementType)ReadByte ();
-
 				switch (etype) {
 				case ElementType.Void:
 					return new ValueImpl { Type = etype };
@@ -900,9 +924,92 @@ namespace Mono.Debugger.Soft
 					return new ValueImpl () { Type = etype, Id = ReadId () };
 				case (ElementType)ValueTypeId.VALUE_TYPE_ID_PARENT_VTYPE:
 					return new ValueImpl () { Type = etype, Index = ReadInt () };
+				case (ElementType)ValueTypeId.VALUE_TYPE_ID_FIXED_ARRAY:
+					return ReadValueFixedSize ();
 				default:
 					throw new NotImplementedException ("Unable to handle type " + etype);
 				}
+			}
+
+			ValueImpl ReadValueFixedSize () {
+				var lenFixedSize = 1;
+				ElementType etype = (ElementType)ReadByte ();
+				lenFixedSize = ReadInt ();
+				switch (etype) {
+					case ElementType.I1: {
+						var val = new sbyte[lenFixedSize];
+						for (int i = 0; i < lenFixedSize; i++)
+							val[i] = (sbyte)ReadInt ();
+						return new ValueImpl { Type = etype, Value = val };
+					}
+					case ElementType.U1: {
+						var val = new byte[lenFixedSize];
+						for (int i = 0; i < lenFixedSize; i++)
+							val[i] = (byte)ReadInt ();
+						return new ValueImpl { Type = etype, Value = val };
+					}
+					case ElementType.Boolean: {
+						var val = new bool[lenFixedSize];
+						for (int i = 0; i < lenFixedSize; i++)
+							val[i] = (ReadInt () != 0);
+						return new ValueImpl { Type = etype, Value = val };
+					}
+					case ElementType.I2: {
+						var val = new short[lenFixedSize];
+						for (int i = 0; i < lenFixedSize; i++)
+							val[i] = (short)ReadInt ();
+						return new ValueImpl { Type = etype, Value = val };
+					}
+					case ElementType.U2: {
+						var val = new ushort[lenFixedSize];
+						for (int i = 0; i < lenFixedSize; i++)
+							val[i] = (ushort)ReadInt ();
+						return new ValueImpl { Type = etype, Value = val };
+					}
+					case ElementType.Char: {
+						var val = new char[lenFixedSize];
+						for (int i = 0; i < lenFixedSize; i++)
+							val[i] = (char)ReadInt ();
+						return new ValueImpl { Type = etype, Value = val };
+					}
+					case ElementType.I4: {
+						var val = new int[lenFixedSize];
+						for (int i = 0; i < lenFixedSize; i++)
+							val[i] = ReadInt ();
+						return new ValueImpl { Type = etype, Value = val };
+					}
+					case ElementType.U4: {
+						var val = new uint[lenFixedSize];
+						for (int i = 0; i < lenFixedSize; i++)
+							val[i] = (uint)ReadInt ();
+						return new ValueImpl { Type = etype, Value = val };
+					}
+					case ElementType.I8: {
+						var val = new long[lenFixedSize];
+						for (int i = 0; i < lenFixedSize; i++)
+							val[i] = ReadLong ();
+						return new ValueImpl { Type = etype, Value = val };
+					}
+					case ElementType.U8: {
+						var val = new ulong[lenFixedSize];
+						for (int i = 0; i < lenFixedSize; i++)
+							val[i] = (ulong) ReadLong ();
+						return new ValueImpl { Type = etype, Value = val };
+					}
+					case ElementType.R4: {
+						var val = new float[lenFixedSize];
+						for (int i = 0; i < lenFixedSize; i++)
+							val[i] = ReadFloat ();
+						return new ValueImpl { Type = etype, Value = val };
+					}
+					case ElementType.R8: {
+						var val = new double[lenFixedSize];
+						for (int i = 0; i < lenFixedSize; i++)
+							val[i] = ReadDouble ();
+						return new ValueImpl { Type = etype, Value = val };
+					}
+				}
+				throw new NotImplementedException ("Unable to handle type " + etype);
 			}
 
 			public long[] ReadIds (int n) {
@@ -1010,6 +1117,16 @@ namespace Mono.Debugger.Soft
 				offset += b.Length;
 				return this;
 			}
+			public PacketWriter WriteBytes (byte[] b) {
+				if (b == null)
+					return WriteInt (-1);
+				MakeRoom (4);
+				encode_int (data, b.Length, ref offset);
+				MakeRoom (b.Length);
+				Buffer.BlockCopy (b, 0, data, offset, b.Length);
+				offset += b.Length;
+				return this;
+			}
 
 			public PacketWriter WriteBool (bool val) {
 				WriteByte (val ? (byte)1 : (byte)0);
@@ -1020,9 +1137,13 @@ namespace Mono.Debugger.Soft
 				ElementType t;
 
 				if (v.Value != null)
-					t = TypeCodeToElementType (Type.GetTypeCode (v.Value.GetType ()));
+					t = TypeCodeToElementType (Type.GetTypeCode (v.Value.GetType ()), v.Value.GetType ());
 				else
 					t = v.Type;
+				if (v.FixedSize > 1 && t != ElementType.ValueType) {
+					WriteFixedSizeValue (v);
+					return this;
+				}
 				WriteByte ((byte)t);
 				switch (t) {
 				case ElementType.Boolean:
@@ -1087,6 +1208,61 @@ namespace Mono.Debugger.Soft
 				return this;
 			}
 
+			PacketWriter WriteFixedSizeValue (ValueImpl v) {
+				ElementType t;
+
+				if (v.Value != null)
+					t = TypeCodeToElementType (Type.GetTypeCode (v.Value.GetType ()), v.Value.GetType ());
+				else
+					t = v.Type;
+				WriteByte ((byte) ValueTypeId.VALUE_TYPE_ID_FIXED_ARRAY);
+				WriteByte ((byte)t);
+				WriteInt (v.FixedSize);
+				for (int j = 0 ; j < v.FixedSize; j++) {
+					switch (t) {
+						case ElementType.Boolean:
+							WriteInt (((bool[])v.Value)[j]? 1 : 0);
+							break;
+						case ElementType.Char:
+							WriteInt ((int)((char[])v.Value)[j]);
+							break;
+						case ElementType.I1:
+							WriteInt ((int)((sbyte[])v.Value)[j]);
+							break;
+						case ElementType.U1:
+							WriteInt ((int)((byte[])v.Value)[j]);
+							break;
+						case ElementType.I2:
+							WriteInt ((int)((short[])v.Value)[j]);
+							break;
+						case ElementType.U2:
+							WriteInt ((int)((ushort[])v.Value)[j]);
+							break;
+						case ElementType.I4:
+							WriteInt ((int)((int[])v.Value)[j]);
+							break;
+						case ElementType.U4:
+							WriteInt ((int)((uint[])v.Value)[j]);
+							break;
+						case ElementType.I8:
+							WriteLong ((long)((long[])v.Value)[j]);
+							break;
+						case ElementType.U8:
+							WriteLong ((long)((ulong[])v.Value)[j]);
+							break;
+						case ElementType.R4:
+							WriteFloat (((float[])v.Value)[j]);
+							break;
+						case ElementType.R8:
+							WriteDouble (((double[])v.Value)[j]);
+							break;
+						default:
+							throw new NotImplementedException ();
+					}
+				}
+				return this;
+			}
+
 			public PacketWriter WriteValues (ValueImpl[] values) {
 				for (int i = 0; i < values.Length; ++i)
 					WriteValue (values [i]);
@@ -1142,6 +1318,8 @@ namespace Mono.Debugger.Soft
 		protected abstract int TransportSend (byte[] buf, int buf_offset, int len);
 		protected abstract void TransportSetTimeouts (int send_timeout, int receive_timeout);
 		protected abstract void TransportClose ();
+		// Shutdown breaks all communication, resuming blocking waits
+		protected abstract void TransportShutdown ();
 
 		internal VersionInfo Version;
 		
@@ -1258,6 +1436,7 @@ namespace Mono.Debugger.Soft
 
 		internal void Close () {
 			closed = true;
+			TransportShutdown ();
 		}
 
 		internal bool IsClosed {
@@ -1267,6 +1446,7 @@ namespace Mono.Debugger.Soft
 		}
 
 		bool disconnected;
+		VMCrashException crashed;
 
 		internal ManualResetEvent DisconnectedEvent = new ManualResetEvent (false);
 
@@ -1274,9 +1454,13 @@ namespace Mono.Debugger.Soft
 			while (!closed) {
 				try {
 					bool res = ReceivePacket ();
-					if (!res)
+					if (!res) {
 						break;
+					}
 				} catch (ThreadAbortException) {
+					break;
+				} catch (VMCrashException ex) {
+					crashed = ex;
 					break;
 				} catch (Exception ex) {
 					if (!closed) {
@@ -1293,6 +1477,15 @@ namespace Mono.Debugger.Soft
 				TransportClose ();
 			}
 			EventHandler.VMDisconnect (0, 0, null);
+		}
+
+		void disconnected_check () {
+			if (!disconnected)
+				return;
+			else if (crashed != null)
+				throw crashed;
+			else
+				throw new VMDisconnectedException ();
 		}
 
 		bool ReceivePacket () {
@@ -1349,6 +1542,11 @@ namespace Mono.Debugger.Soft
 									exit_code = r.ReadInt ();
 								//EventHandler.VMDeath (req_id, 0, null);
 								events [i] = new EventInfo (etype, req_id) { ExitCode = exit_code };
+							} else if (kind == EventKind.CRASH) {
+								ulong hash = (ulong) r.ReadLong ();
+								string dump = r.ReadString ();
+
+								events [i] = new EventInfo (etype, req_id) { Dump = dump, Hash = hash};
 							} else if (kind == EventKind.THREAD_START) {
 								events [i] = new EventInfo (etype, req_id) { ThreadId = thread_id, Id = thread_id };
 								//EventHandler.ThreadStart (req_id, thread_id, thread_id);
@@ -1566,8 +1764,7 @@ namespace Mono.Debugger.Soft
 			int id = IdGenerator;
 			Stopwatch watch = null;
 
-			if (disconnected)
-				throw new VMDisconnectedException ();
+			disconnected_check ();
 
 			if (EnableConnectionLogging)
 				watch = Stopwatch.StartNew ();
@@ -1586,8 +1783,8 @@ namespace Mono.Debugger.Soft
 			/* Wait for the reply packet */
 			while (true) {
 				lock (reply_packets_monitor) {
-					if (reply_packets.ContainsKey (packetId)) {
-						byte[] reply = reply_packets [packetId];
+					byte[] reply;
+					if (reply_packets.TryGetValue (packetId, out reply)) {
 						reply_packets.Remove (packetId);
 						PacketReader r = new PacketReader (this, reply);
 
@@ -1601,8 +1798,7 @@ namespace Mono.Debugger.Soft
 							return r;
 						}
 					} else {
-						if (disconnected)
-							throw new VMDisconnectedException ();
+						disconnected_check ();
 						Monitor.Wait (reply_packets_monitor);
 					}
 				}
@@ -1635,7 +1831,15 @@ namespace Mono.Debugger.Soft
 					CattrNamedArgInfo arg = new CattrNamedArgInfo ();
 					int arg_type = r.ReadByte ();
 					arg.is_property = arg_type == 0x54;
-					arg.id = r.ReadId ();
+
+					// 2.12 is the only version we can guarantee the server will send a field id
+					// It was added in https://github.com/mono/mono/commit/db0b932cd6c3c93976479ae3f6b5b2a885f681de
+					// In between 2.11 and 2.12
+					if (arg.is_property)
+						arg.id = r.ReadId ();
+					else if (Version.AtLeast (2, 12))
+						arg.id = r.ReadId ();
+
 					arg.value = r.ReadValue ();
 					info.named_args [j] = arg;
 				}
@@ -1644,7 +1848,7 @@ namespace Mono.Debugger.Soft
 			return res;
 		}
 
-		static ElementType TypeCodeToElementType (TypeCode c) {
+		static ElementType TypeCodeToElementType (TypeCode c, Type t) {
 			switch (c) {
 			case TypeCode.Boolean:
 				return ElementType.Boolean;
@@ -1670,6 +1874,8 @@ namespace Mono.Debugger.Soft
 				return ElementType.R4;
 			case TypeCode.Double:
 				return ElementType.R8;
+			case TypeCode.Object:
+				return TypeCodeToElementType(Type.GetTypeCode (t.GetElementType()), t.GetElementType());
 			default:
 				throw new NotImplementedException ();
 			}
@@ -1861,6 +2067,12 @@ namespace Mono.Debugger.Soft
 
 		internal long Domain_CreateString (long id, string s) {
 			return SendReceive (CommandSet.APPDOMAIN, (int)CmdAppDomain.CREATE_STRING, new PacketWriter ().WriteId (id).WriteString (s)).ReadId ();
+		}
+
+		internal long Domain_CreateByteArray (long id, byte [] bytes) {
+			var w = new PacketWriter ().WriteId (id);
+			w.WriteBytes (bytes);
+			return SendReceive (CommandSet.APPDOMAIN, (int)CmdAppDomain.CREATE_BYTE_ARRAY, w).ReadId ();
 		}
 
 		internal long Domain_CreateBoxedValue (long id, long type_id, ValueImpl v) {
@@ -2079,6 +2291,10 @@ namespace Mono.Debugger.Soft
 			return SendReceive (CommandSet.THREAD, (int)CmdThread.GET_NAME, new PacketWriter ().WriteId (id)).ReadString ();
 		}
 
+		internal long Thread_GetElapsedTime (long id) {
+			return SendReceive (CommandSet.THREAD, (int)CmdThread.GET_ELAPSED_TIME, new PacketWriter ().WriteId (id)).ReadLong ();
+		}
+
 		internal void Thread_GetFrameInfo (long id, int start_frame, int length, Action<FrameInfo[]> resultCallaback) {
 			Send (CommandSet.THREAD, (int)CmdThread.GET_FRAME_INFO, new PacketWriter ().WriteId (id).WriteInt (start_frame).WriteInt (length), (res) => {
 				int count = res.ReadInt ();
@@ -2126,6 +2342,8 @@ namespace Mono.Debugger.Soft
 		internal ModuleInfo Module_GetInfo (long id) {
 			PacketReader r = SendReceive (CommandSet.MODULE, (int)CmdModule.GET_INFO, new PacketWriter ().WriteId (id));
 			ModuleInfo info = new ModuleInfo { Name = r.ReadString (), ScopeName = r.ReadString (), FQName = r.ReadString (), Guid = r.ReadString (), Assembly = r.ReadId () };
+			if (Version.AtLeast (2, 48))
+				info.SourceLink = r.ReadString ();
 			return info;
 		}
 
@@ -2179,6 +2397,10 @@ namespace Mono.Debugger.Soft
 
 		internal long Assembly_GetMethod (long id, uint token) {
 			return SendReceive (CommandSet.ASSEMBLY, (int)CmdAssembly.GET_METHOD_FROM_TOKEN, new PacketWriter ().WriteId (id).WriteInt ((int)token)).ReadId ();
+		}
+
+		internal bool Assembly_HasDebugInfo (long id) {
+			return SendReceive (CommandSet.ASSEMBLY, (int)CmdAssembly.HAS_DEBUG_INFO, new PacketWriter ().WriteId (id)).ReadBool ();
 		}
 
 		/*
@@ -2319,7 +2541,11 @@ namespace Mono.Debugger.Soft
 
 		public long[] Type_GetMethodsByNameFlags (long id, string name, int flags, bool ignoreCase) {
 			flags |= ignoreCase ? (int)BindingFlagsExtensions.BINDING_FLAGS_IGNORE_CASE : 0;
-			PacketReader r = SendReceive (CommandSet.TYPE, (int)CmdType.CMD_TYPE_GET_METHODS_BY_NAME_FLAGS, new PacketWriter ().WriteId (id).WriteString (name).WriteInt (flags));
+			int listType = ignoreCase ? (int)MemberListTypeExtensions.CaseInsensitive : (int)MemberListTypeExtensions.CaseSensitive;
+			var w = new PacketWriter ().WriteId (id).WriteString (name).WriteInt (flags);
+			if (Version.AtLeast (2, 48))
+				w.WriteInt (listType);
+			PacketReader r = SendReceive (CommandSet.TYPE, (int)CmdType.CMD_TYPE_GET_METHODS_BY_NAME_FLAGS, w);
 			int len = r.ReadInt ();
 			long[] res = new long [len];
 			for (int i = 0; i < len; ++i)
@@ -2415,6 +2641,10 @@ namespace Mono.Debugger.Soft
 							w.WriteBool (em.Subclasses);
 						} else if (!em.Subclasses) {
 							throw new NotSupportedException ("This request is not supported by the protocol version implemented by the debuggee.");
+						}
+						if (Version.MajorVersion > 2 || Version.MinorVersion >= 54) {
+							w.WriteBool (em.NotFilteredFeature);
+							w.WriteBool (em.EverythingElse);
 						}
 					} else if (mod is AssemblyModifier) {
 						w.WriteByte ((byte)ModifierKind.ASSEMBLY_ONLY);
@@ -2637,6 +2867,11 @@ namespace Mono.Debugger.Soft
 		protected override void TransportClose ()
 		{
 			socket.Close ();
+		}
+
+		protected override void TransportShutdown ()
+		{
+			socket.Shutdown (SocketShutdown.Both);
 		}
 	}
 

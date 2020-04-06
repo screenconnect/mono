@@ -20,13 +20,23 @@
 #include "config.h"
 #include <glib.h>
 
-#if SIZEOF_REGISTER == 4
-typedef gint32 mgreg_t;
-#elif SIZEOF_REGISTER == 8
-typedef gint64 mgreg_t;
+// __ILP32__ means integer, long, and pointers are 32bits, and nothing about registers.
+// MONO_ARCH_ILP32 means integer, long, and pointers are 32bits, and 64bit registers.
+// This is for example x32, arm6432, mipsn32, Alpha/NT.
+#ifdef MONO_ARCH_ILP32
+typedef gint64 host_mgreg_t;
+typedef guint64 host_umgreg_t;
+#else
+typedef gssize host_mgreg_t;
+typedef gsize host_umgreg_t;
 #endif
 
-#if TARGET_SIZEOF_VOID_P == 4
+/* SIZEOF_REGISTER      ... machine register size of target machine
+ * TARGET_SIZEOF_VOID_P ... pointer size of target machine
+ *
+ * SIZEOF_REGISTER is usually the same as TARGET_SIZEOF_VOID_P, except when MONO_ARCH_ILP32 is defined
+ */
+#if SIZEOF_REGISTER == 4
 typedef gint32 target_mgreg_t;
 #else
 typedef gint64 target_mgreg_t;

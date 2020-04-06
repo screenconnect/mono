@@ -34,6 +34,7 @@
 #include <mono/metadata/w32handle.h>
 #include <mono/utils/bsearch.h>
 #include <mono/utils/mono-counters.h>
+#include "mono/metadata/class-init.h"
 
 static void     setup_filter          (MonoImage *image);
 static gboolean should_include_type   (int idx);
@@ -862,7 +863,7 @@ dis_method_list (const char *klass_name, MonoImage *m, guint32 start, guint32 en
 		if (container) {
 			ERROR_DECL (error);
 			mono_metadata_load_generic_param_constraints_checked (m, MONO_TOKEN_METHOD_DEF | (i + 1), container, error);
-			g_assert (mono_error_ok (error)); /*FIXME don't swallow the error message*/
+			g_assert (is_ok (error)); /*FIXME don't swallow the error message*/
 		} else {
 			container = type_container;
 		}
@@ -1205,7 +1206,7 @@ dis_type (MonoImage *m, int n, int is_nested, int forward)
 	if (container) {
 		ERROR_DECL (error);
 		mono_metadata_load_generic_param_constraints_checked (m, MONO_TOKEN_TYPE_DEF | (n + 1), container, error);
-		g_assert (mono_error_ok (error)); /*FIXME don't swallow the error message*/
+		g_assert (is_ok (error)); /*FIXME don't swallow the error message*/
 	}
 
 	esname = get_escaped_name (name);
@@ -1546,7 +1547,7 @@ dis_data (MonoImage *m)
 			mono_error_cleanup (error);
 			continue;
 		}
-		mono_class_init (mono_class_from_mono_type (type));
+		mono_class_init_internal (mono_class_from_mono_type_internal (type));
 		size = mono_type_size (type, &align);
 
 		if (rva) {
@@ -1632,7 +1633,10 @@ disassemble_file (const char *file)
 	} else {
 		/* FIXME: is this call necessary? */
 		/* FIXME: if it's necessary, can it be refonly instead? */
-		mono_assembly_load_from_predicate (img, file, MONO_ASMCTX_DEFAULT, NULL, NULL, &status);
+		MonoAssemblyLoadRequest req;
+		mono_assembly_request_prepare_load (&req, MONO_ASMCTX_DEFAULT, mono_domain_default_alc (mono_domain_get ()));
+
+		mono_assembly_request_load_from (img, file, &req, &status);
 	}
 
 	setup_filter (img);
@@ -1779,9 +1783,9 @@ sort_filter_elems (void)
 
 	for (item = filter_list; item; item = item->next) {
 		ifilter = (ImageFilter *)item->data;
-		qsort (ifilter->types.elems, ifilter->types.count, sizeof (int), int_cmp);
-		qsort (ifilter->fields.elems, ifilter->fields.count, sizeof (int), int_cmp);
-		qsort (ifilter->methods.elems, ifilter->methods.count, sizeof (int), int_cmp);
+		mono_qsort (ifilter->types.elems, ifilter->types.count, sizeof (int), int_cmp);
+		mono_qsort (ifilter->fields.elems, ifilter->fields.count, sizeof (int), int_cmp);
+		mono_qsort (ifilter->methods.elems, ifilter->methods.count, sizeof (int), int_cmp);
 	}
 }
 
@@ -1847,23 +1851,22 @@ load_filter (const char* filename)
 static gboolean
 try_load_from (MonoAssembly **assembly,
 	       const gchar *path1, const gchar *path2,
-	       const gchar *path3, const gchar *path4, gboolean refonly,
-	       MonoAssemblyCandidatePredicate predicate, gpointer user_data)
+	       const gchar *path3, const gchar *path4,
+	       const MonoAssemblyOpenRequest *req)
 {
 	gchar *fullpath;
 
 	*assembly = NULL;
-	fullpath = g_build_filename (path1, path2, path3, path4, NULL);
+	fullpath = g_build_filename (path1, path2, path3, path4, (const char*)NULL);
 	if (g_file_test (fullpath, G_FILE_TEST_IS_REGULAR))
-		*assembly = mono_assembly_open_predicate (fullpath, refonly ? MONO_ASMCTX_REFONLY : MONO_ASMCTX_DEFAULT, predicate, user_data, NULL, NULL);
+		*assembly = mono_assembly_request_open (fullpath, req, NULL);
 
 	g_free (fullpath);
 	return (*assembly != NULL);
 }
 
 static MonoAssembly *
-real_load (gchar **search_path, const gchar *culture, const gchar *name, gboolean refonly,
-	   MonoAssemblyCandidatePredicate predicate, gpointer user_data)
+real_load (gchar **search_path, const gchar *culture, const gchar *name, const MonoAssemblyOpenRequest *req)
 {
 	MonoAssembly *result = NULL;
 	gchar **path;
@@ -1877,7 +1880,7 @@ real_load (gchar **search_path, const gchar *culture, const gchar *name, gboolea
 		local_culture = culture;
 	}
 
-	filename =  g_strconcat (name, ".dll", NULL);
+	filename =  g_strconcat (name, ".dll", (const char*)NULL);
 	len = strlen (filename);
 
 	for (path = search_path; *path; path++) {
@@ -1887,22 +1890,22 @@ real_load (gchar **search_path, const gchar *culture, const gchar *name, gboolea
 		/* See test cases in bug #58992 and bug #57710 */
 		/* 1st try: [culture]/[name].dll (culture may be empty) */
 		strcpy (filename + len - 4, ".dll");
-		if (try_load_from (&result, *path, local_culture, "", filename, refonly, predicate, user_data))
+		if (try_load_from (&result, *path, local_culture, "", filename, req))
 			break;
 
 		/* 2nd try: [culture]/[name].exe (culture may be empty) */
 		strcpy (filename + len - 4, ".exe");
-		if (try_load_from (&result, *path, local_culture, "", filename, refonly, predicate, user_data))
+		if (try_load_from (&result, *path, local_culture, "", filename, req))
 			break;
 
 		/* 3rd try: [culture]/[name]/[name].dll (culture may be empty) */
 		strcpy (filename + len - 4, ".dll");
-		if (try_load_from (&result, *path, local_culture, name, filename, refonly, predicate, user_data))
+		if (try_load_from (&result, *path, local_culture, name, filename, req))
 			break;
 
 		/* 4th try: [culture]/[name]/[name].exe (culture may be empty) */
 		strcpy (filename + len - 4, ".exe");
-		if (try_load_from (&result, *path, local_culture, name, filename, refonly, predicate, user_data))
+		if (try_load_from (&result, *path, local_culture, name, filename, req))
 			break;
 	}
 
@@ -1914,15 +1917,20 @@ real_load (gchar **search_path, const gchar *culture, const gchar *name, gboolea
  * Try to load referenced assemblies from assemblies_path.
  */
 static MonoAssembly *
-monodis_preload (MonoAssemblyName *aname,
-				 gchar **assemblies_path,
-				 gpointer user_data)
+monodis_preload (MonoAssemblyLoadContext *alc,
+                 MonoAssemblyName *aname,
+                 gchar **assemblies_path,
+                 gboolean refonly,
+                 gpointer user_data,
+                 MonoError *error)
 {
 	MonoAssembly *result = NULL;
-	gboolean refonly = GPOINTER_TO_UINT (user_data);
 
 	if (assemblies_path && assemblies_path [0] != NULL) {
-		result = real_load (assemblies_path, aname->culture, aname->name, refonly, NULL, NULL);
+		MonoAssemblyOpenRequest req;
+		mono_assembly_request_prepare_open (&req, refonly ? MONO_ASMCTX_REFONLY : MONO_ASMCTX_DEFAULT, alc);
+
+		result = real_load (assemblies_path, aname->culture, aname->name, &req);
 	}
 
 	return result;
@@ -1931,13 +1939,13 @@ monodis_preload (MonoAssemblyName *aname,
 static GList *loaded_assemblies = NULL;
 
 static void
-monodis_assembly_load_hook (MonoAssembly *assembly, gpointer user_data)
+monodis_assembly_load_hook (MonoAssemblyLoadContext *alc, MonoAssembly *assembly, gpointer user_data, MonoError *error)
 {
 	loaded_assemblies = g_list_prepend (loaded_assemblies, assembly);
 }
 
 static MonoAssembly *
-monodis_assembly_search_hook (MonoAssemblyName *aname, gpointer user_data)
+monodis_assembly_search_hook (MonoAssemblyLoadContext *alc, MonoAssembly *requesting, MonoAssemblyName *aname, gboolean refonly, gboolean postload, gpointer user_data, MonoError *error)
 {
         GList *tmp;
 
@@ -1972,14 +1980,20 @@ usage (void)
 }
 
 static void
-thread_state_init (MonoThreadUnwindState *ctx)
+monodis_thread_state_init (MonoThreadUnwindState *ctx)
 {
 }
+
+#define monodis_setup_async_callback          NULL
+#define monodis_thread_state_init_from_sigctx NULL
+#define monodis_thread_state_init_from_handle NULL
 
 int
 main (int argc, char *argv [])
 {
-	MonoThreadInfoRuntimeCallbacks ticallbacks;
+	static const MonoThreadInfoRuntimeCallbacks ticallbacks = {
+		MONO_THREAD_INFO_RUNTIME_CALLBACKS (MONO_INIT_CALLBACK, monodis)
+	};
 
 	GList *input_files = NULL, *l;
 	int i, j;
@@ -2034,15 +2048,13 @@ main (int argc, char *argv [])
 	CHECKED_MONO_INIT ();
 	mono_counters_init ();
 	mono_tls_init_runtime_keys ();
-	memset (&ticallbacks, 0, sizeof (ticallbacks));
-	ticallbacks.thread_state_init = thread_state_init;
 #ifndef HOST_WIN32
 	mono_w32handle_init ();
 #endif
 	mono_thread_info_runtime_init (&ticallbacks);
 
-	mono_install_assembly_load_hook (monodis_assembly_load_hook, NULL);
-	mono_install_assembly_search_hook (monodis_assembly_search_hook, NULL);
+	mono_install_assembly_load_hook_v2 (monodis_assembly_load_hook, NULL);
+	mono_install_assembly_search_hook_v2 (monodis_assembly_search_hook, NULL, FALSE, FALSE);
 
 	/*
 	 * If we just have one file, use the corlib version it requires.
@@ -2052,7 +2064,7 @@ main (int argc, char *argv [])
 
 		mono_init_from_assembly (argv [0], filename);
 
-		mono_install_assembly_preload_hook (monodis_preload, GUINT_TO_POINTER (FALSE));
+		mono_install_assembly_preload_hook_v2 (monodis_preload, GUINT_TO_POINTER (FALSE), FALSE);
 
 		return disassemble_file (filename);
 	} else {

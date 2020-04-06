@@ -22,7 +22,6 @@
 #include <mono/metadata/assembly.h>
 #include <mono/metadata/mono-config.h>
 #include <mono/utils/mono-mmap.h>
-#include <mono/utils/mono-dl.h>
 #include "mini.h"
 #include "mini-runtime.h"
 
@@ -36,6 +35,8 @@
 #    include "buildver-boehm.h"
 #  endif
 #endif
+
+//#define TEST_ICALL_SYMBOL_MAP 1
 
 /*
  * If the MONO_ENV_OPTIONS environment variable is set, it uses this as a
@@ -97,96 +98,6 @@ mono_main_with_options (int argc, char *argv [])
  */
 #define STREAM_INT(x) GUINT32_TO_LE((*(uint32_t*)x))
 #define STREAM_LONG(x) GUINT64_TO_LE((*(uint64_t*)x))
-
-/**
- * Loads a chunk of data from the file pointed to by the
- * @fd starting at the file offset @offset for @size bytes
- * and returns an allocated version of that string, or NULL
- * on error.
- */
-static char *
-load_from_region (int fd, uint64_t offset, uint64_t size)
-{
-	char *buffer;
-	off_t loc;
-	int status;
-	
-	do {
-		loc = lseek (fd, offset, SEEK_SET);
-	} while (loc == -1 && errno == EINTR);
-	if (loc == -1)
-		return NULL;
-	buffer = g_malloc (size + 1);
-	if (buffer == NULL)
-		return NULL;
-	buffer [size] = 0;
-	do {
-		status = read (fd, buffer, size);
-	} while (status == -1 && errno == EINTR);
-	if (status == -1){
-		g_free (buffer);
-		return NULL;
-	}
-	return buffer;
-}
-
-/* Did we initialize the temporary directory for dynamic libraries */
-static int bundle_save_library_initialized;
-
-/* List of bundled libraries we unpacked */
-static GSList *bundle_library_paths;
-
-/* Directory where we unpacked dynamic libraries */
-static char *bundled_dylibrary_directory;
-
-static void
-delete_bundled_libraries (void)
-{
-	GSList *list;
-
-	for (list = bundle_library_paths; list != NULL; list = list->next){
-		unlink (list->data);
-	}
-	rmdir (bundled_dylibrary_directory);
-}
-
-static void
-bundle_save_library_initialize (void)
-{
-	bundle_save_library_initialized = 1;
-	char *path = g_build_filename (g_get_tmp_dir (), "mono-bundle-XXXXXX", NULL);
-	bundled_dylibrary_directory = g_mkdtemp (path);
-	g_free (path);
-	if (bundled_dylibrary_directory == NULL)
-		return;
-	atexit (delete_bundled_libraries);
-}
-
-static void
-save_library (int fd, uint64_t offset, uint64_t size, const char *destfname)
-{
-	MonoDl *lib;
-	char *file, *buffer, *err, *internal_path;
-	if (!bundle_save_library_initialized)
-		bundle_save_library_initialize ();
-	
-	file = g_build_filename (bundled_dylibrary_directory, destfname, NULL);
-	buffer = load_from_region (fd, offset, size);
-	g_file_set_contents (file, buffer, size, NULL);
-
-	lib = mono_dl_open (file, MONO_DL_LAZY, &err);
-	if (lib == NULL){
-		fprintf (stderr, "Error loading shared library: %s %s\n", file, err);
-		exit (1);
-	}
-	// Register the name with "." as this is how it will be found when embedded
-	internal_path = g_build_filename (".", destfname, NULL);
- 	mono_loader_register_module (internal_path, lib);
-	g_free (internal_path);
-	bundle_library_paths = g_slist_append (bundle_library_paths, file);
-	
-	g_free (buffer);
-}
 
 #ifndef HOST_WIN32
 static gboolean
@@ -287,7 +198,8 @@ probe_embedded (const char *program, int *ref_argc, char **ref_argv [])
 	for (i = 0; i < items; i++){
 		char *kind;
 		int strsize = STREAM_INT (p);
-		uint64_t offset, item_size;
+		uint64_t offset;
+		uint32_t item_size;
 		kind = p+4;
 		p += 4 + strsize;
 		offset = STREAM_LONG(p);
@@ -297,7 +209,7 @@ probe_embedded (const char *program, int *ref_argc, char **ref_argv [])
 		
 		if (mapaddress == NULL) {
 			char *error_message = NULL;
-			mapaddress = mono_file_map_error (directory_location - offset, MONO_MMAP_READ | MONO_MMAP_PRIVATE,
+			mapaddress = (guchar*)mono_file_map_error (directory_location - offset, MONO_MMAP_READ | MONO_MMAP_PRIVATE,
 				fd, offset, &maphandle, program, &error_message);
 			if (mapaddress == NULL) {
 				if (error_message)
@@ -320,24 +232,24 @@ probe_embedded (const char *program, int *ref_argc, char **ref_argv [])
 			char *config = kind + strlen ("config:");
 			char *aname = g_strdup (config);
 			aname [strlen(aname)-strlen(".config")] = 0;
-			mono_register_config_for_assembly (aname, load_from_region (fd, offset, item_size));
+			mono_register_config_for_assembly (aname, g_str_from_file_region (fd, offset, item_size));
 		} else if (strncmp (kind, "systemconfig:", strlen ("systemconfig:")) == 0){
-			mono_config_parse_memory (load_from_region (fd, offset, item_size));
+			mono_config_parse_memory (g_str_from_file_region (fd, offset, item_size));
 		} else if (strncmp (kind, "options:", strlen ("options:")) == 0){
-			mono_parse_options_from (load_from_region (fd, offset, item_size), ref_argc, ref_argv);
+			mono_parse_options_from (g_str_from_file_region (fd, offset, item_size), ref_argc, ref_argv);
 		} else if (strncmp (kind, "config_dir:", strlen ("config_dir:")) == 0){
 			char *mono_path_value = g_getenv ("MONO_PATH");
-			mono_set_dirs (mono_path_value, load_from_region (fd, offset, item_size));
+			mono_set_dirs (mono_path_value, g_str_from_file_region (fd, offset, item_size));
 			g_free (mono_path_value);
 		} else if (strncmp (kind, "machineconfig:", strlen ("machineconfig:")) == 0) {
-			mono_register_machine_config (load_from_region (fd, offset, item_size));
+			mono_register_machine_config (g_str_from_file_region (fd, offset, item_size));
 		} else if (strncmp (kind, "env:", strlen ("env:")) == 0){
-			char *data = load_from_region (fd, offset, item_size);
+			char *data = g_str_from_file_region (fd, offset, item_size);
 			uint8_t count = *data++;
 			char *value = data + count + 1;
 			g_setenv (data, value, FALSE);
 		} else if (strncmp (kind, "library:", strlen ("library:")) == 0){
-			save_library (fd, offset, item_size, kind + strlen ("library:"));
+			mono_loader_save_bundled_library (fd, offset, item_size, kind + strlen ("library:"));
 		} else {
 			fprintf (stderr, "Unknown stream on embedded package: %s\n", kind);
 			exit (1);
@@ -364,21 +276,35 @@ doclose:
 	return status;
 }
 
+#if TEST_ICALL_SYMBOL_MAP
+
+const char*
+mono_lookup_icall_symbol_internal (gpointer func);
+
+ICALL_EXPORT int ves_icall_Interop_Sys_DoubleToString (double, char*, char*, int);
+
+#endif
+
 #ifdef HOST_WIN32
 
 #include <shellapi.h>
 
+#ifdef _WINDOWS
+int APIENTRY
+wWinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLine, int nCmdShow)
+#else
 int
-main (void)
+main (int _argc, char* _argv[])
+#endif
 {
-	TCHAR szFileName[MAX_PATH];
+	gunichar2 *module_file_name;
+	guint32 length;
 	int argc;
 	gunichar2** argvw;
 	gchar** argv;
 	int i;
-	DWORD count;
-	
-	argvw = CommandLineToArgvW (GetCommandLine (), &argc);
+
+	argvw = CommandLineToArgvW (GetCommandLineW (), &argc);
 	argv = g_new0 (gchar*, argc + 1);
 	for (i = 0; i < argc; i++)
 		argv [i] = g_utf16_to_utf8 (argvw [i], -1, NULL, NULL, NULL);
@@ -386,8 +312,9 @@ main (void)
 
 	LocalFree (argvw);
 
-	if ((count = GetModuleFileName (NULL, szFileName, MAX_PATH)) != 0){
-		char *entry = g_utf16_to_utf8 (szFileName, count, NULL, NULL, NULL);
+	if (mono_get_module_filename (NULL, &module_file_name, &length)) {
+		char *entry = g_utf16_to_utf8 (module_file_name, length, NULL, NULL, NULL);
+		g_free (module_file_name);
 		probe_embedded (entry, &argc, &argv);
 	}
 
@@ -400,6 +327,13 @@ int
 main (int argc, char* argv[])
 {
 	mono_build_date = build_date;
+
+#if TEST_ICALL_SYMBOL_MAP
+	const char *p  = mono_lookup_icall_symbol_internal (mono_lookup_icall_symbol_internal);
+	printf ("%s\n", p ? p : "null");
+	p  = mono_lookup_icall_symbol_internal (ves_icall_Interop_Sys_DoubleToString);
+	printf ("%s\n", p ? p : "null");
+#endif
 
 	probe_embedded (argv [0], &argc, &argv);
 	return mono_main_with_options (argc, argv);

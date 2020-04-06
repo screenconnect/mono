@@ -42,7 +42,7 @@ using System.Threading.Tasks;
 namespace System.IO {
 	[DefaultEvent("Changed")]
 	[IODescription ("")]
-	public class FileSystemWatcher : Component, ISupportInitialize {
+	public partial class FileSystemWatcher : Component, ISupportInitialize {
 
 		#region Fields
 
@@ -61,7 +61,7 @@ namespace System.IO {
 		SearchPattern2 pattern;
 		bool disposed;
 		string mangledFilter;
-		static IFileWatcher watcher;
+		IFileWatcher watcher;
 		object watcher_handle;
 		static object lockobj = new object ();
 
@@ -142,10 +142,6 @@ namespace System.IO {
 					break;
 				case 4: // libgamin
 					ok = FAMWatcher.GetInstance (out watcher, true);
-					watcher_handle = this;
-					break;
-				case 5: // inotify
-					ok = InotifyWatcher.GetInstance (out watcher, true);
 					watcher_handle = this;
 					break;
 				case 6: // CoreFX
@@ -424,6 +420,8 @@ namespace System.IO {
 		}
 		private void RaiseEvent (Delegate ev, EventArgs arg, EventType evtype)
 		{
+			if (disposed)
+				return;
 			if (ev == null)
 				return;
 
@@ -501,11 +499,15 @@ namespace System.IO {
 
 		internal void DispatchErrorEvents (ErrorEventArgs args)
 		{
+			if (disposed)
+				return;
 			OnError (args);
 		}
 
 		internal void DispatchEvents (FileAction act, string filename, ref RenamedEventArgs renamed)
 		{
+			if (disposed)
+				return;
 			if (waiting) {
 				lastData = new WaitForChangedResult ();
 			}

@@ -29,9 +29,11 @@
 
 
 using System;
-using System.Threading;
 using NUnit.Framework;
+using System.Threading;
 using System.Threading.Tasks;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
 
 namespace MonoTests.System.Threading
 {
@@ -50,6 +52,7 @@ namespace MonoTests.System.Threading
 		}
 
 		[Test]
+		[Category ("MultiThreaded")]
 		public void Ctor_Timeout ()
 		{
 			int called = 0;
@@ -62,6 +65,7 @@ namespace MonoTests.System.Threading
 		}
 
 		[Test]
+		[Category ("MultiThreaded")]
 		public void CancelAfter ()
 		{
 			int called = 0;
@@ -379,6 +383,7 @@ namespace MonoTests.System.Threading
 		}
 
 		[Test]
+		[Category ("MultiThreaded")]
 		public void RegisterWhileCancelling ()
 		{
 			var cts = new CancellationTokenSource ();
@@ -442,8 +447,9 @@ namespace MonoTests.System.Threading
 			bool canceled = false;
 			cts.Token.Register (() => canceled = true);
 
-			using (var linked = CancellationTokenSource.CreateLinkedTokenSource (cts.Token))
+			using (var linked = CancellationTokenSource.CreateLinkedTokenSource (cts.Token)) {
 				;
+			}
 
 			Assert.IsFalse (canceled, "#1");
 			Assert.IsFalse (cts.IsCancellationRequested, "#2");
@@ -489,6 +495,104 @@ namespace MonoTests.System.Threading
 				c1.CancelAfter (1);
 				Thread.Sleep (1);
 				c1.Dispose ();
+			}
+		}
+
+		[Test] // https://github.com/mono/mono/issues/16759
+		[Category("NotWasm")]
+		public void EnsureCanceledContinuationsAreOnSameThread ()
+		{
+			AsyncPump.Run(async delegate {
+				var _tcs = new TaskCompletionSource<bool>();
+				var _cts = new CancellationTokenSource();
+
+				var curThreadId = Thread.CurrentThread.ManagedThreadId;
+				var taskThreadId = 0;
+				var taskIsCancelled = false;
+                
+                var task = Task.Run(() =>
+                {
+					taskThreadId = Thread.CurrentThread.ManagedThreadId;
+                    _cts.Cancel();
+                });
+
+                _cts.Token.Register(() => _tcs.TrySetCanceled());
+                try
+                {
+                    await _tcs.Task;
+                }
+                catch (OperationCanceledException)
+                {
+					// Continuation should run on the same thread before the task started.					
+                    Assert.AreEqual(curThreadId, Thread.CurrentThread.ManagedThreadId, "#1");
+					taskIsCancelled = true;
+                }
+
+				Assert.IsTrue (taskIsCancelled, "#2");
+				Assert.AreNotEqual(taskThreadId, curThreadId, "#3");
+			});			
+		}
+
+		public static class AsyncPump
+		{
+			/// <summary>Runs the specified asynchronous function.</summary>
+			/// <param name="func">The asynchronous function to execute.</param>
+			public static void Run(Func<Task> func)
+			{
+				if (func == null) throw new ArgumentNullException("func");
+
+				var prevCtx = SynchronizationContext.Current;
+				try
+				{
+					// Establish the new context
+					var syncCtx = new SingleThreadSynchronizationContext();
+					SynchronizationContext.SetSynchronizationContext(syncCtx);
+
+					// Invoke the function and alert the context to when it completes
+					var t = func();
+					if (t == null) throw new InvalidOperationException("No task provided.");
+					t.ContinueWith(delegate { syncCtx.Complete(); }, TaskScheduler.Default);
+
+					// Pump continuations and propagate any exceptions
+					syncCtx.RunOnCurrentThread();
+					t.GetAwaiter().GetResult();
+				}
+				finally { SynchronizationContext.SetSynchronizationContext(prevCtx); }
+			}
+
+			/// <summary>Provides a SynchronizationContext that's single-threaded.</summary>
+			private sealed class SingleThreadSynchronizationContext : SynchronizationContext
+			{
+				/// <summary>The queue of work items.</summary>
+				private readonly BlockingCollection<KeyValuePair<SendOrPostCallback, object>> m_queue =
+					new BlockingCollection<KeyValuePair<SendOrPostCallback, object>>();
+				/// <summary>The processing thread.</summary>
+				private readonly Thread m_thread = Thread.CurrentThread;
+
+				/// <summary>Dispatches an asynchronous message to the synchronization context.</summary>
+				/// <param name="d">The System.Threading.SendOrPostCallback delegate to call.</param>
+				/// <param name="state">The object passed to the delegate.</param>
+				public override void Post(SendOrPostCallback d, object state)
+				{
+					if (d == null) throw new ArgumentNullException("d");
+					m_queue.Add(new KeyValuePair<SendOrPostCallback, object>(d, state));
+				}
+
+				/// <summary>Not supported.</summary>
+				public override void Send(SendOrPostCallback d, object state)
+				{
+					throw new NotSupportedException("Synchronously sending is not supported.");
+				}
+
+				/// <summary>Runs an loop to process all queued work items.</summary>
+				public void RunOnCurrentThread()
+				{
+					foreach (var workItem in m_queue.GetConsumingEnumerable())
+						workItem.Key(workItem.Value);
+				}
+
+				/// <summary>Notifies the context that no more work will arrive.</summary>
+				public void Complete() { m_queue.CompleteAdding(); }
 			}
 		}
 	}

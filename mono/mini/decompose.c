@@ -18,6 +18,8 @@
 #include <mono/metadata/gc-internals.h>
 #include <mono/metadata/abi-details.h>
 #include <mono/utils/mono-compiler.h>
+#define MONO_MATH_DECLARE_ALL 1
+#include <mono/utils/mono-math.h>
 
 #ifndef DISABLE_JIT
 
@@ -435,7 +437,6 @@ mono_decompose_opcode (MonoCompile *cfg, MonoInst *ins)
 	case OP_FCONV_TO_OVF_U1_UN:
 	case OP_FCONV_TO_OVF_U2_UN:
 	case OP_FCONV_TO_OVF_U4_UN:
-	case OP_FCONV_TO_OVF_U8_UN:
 	case OP_FCONV_TO_OVF_I_UN:
 	case OP_FCONV_TO_OVF_U_UN:
 		mono_cfg_set_exception_invalid_program (cfg, g_strdup_printf ("float conv.ovf.un opcodes not supported."));
@@ -1248,6 +1249,7 @@ mono_decompose_vtype_opts (MonoCompile *cfg)
 					g_assert (ins->klass);
 
 					EMIT_NEW_VARLOADA_VREG (cfg, dest, ins->dreg, m_class_get_byval_arg (ins->klass));
+
 					mini_emit_initobj (cfg, dest, NULL, ins->klass);
 					
 					if (cfg->compute_gc_maps) {
@@ -1271,7 +1273,9 @@ mono_decompose_vtype_opts (MonoCompile *cfg)
 				case OP_STOREV_MEMBASE: {
 					src_var = get_vreg_to_inst (cfg, ins->sreg1);
 
-					if (COMPILE_LLVM (cfg) && !mini_is_gsharedvt_klass (ins->klass) && !cfg->gen_write_barriers)
+					mono_class_init_sizes (ins->klass);
+
+					if (COMPILE_LLVM (cfg) && !mini_is_gsharedvt_klass (ins->klass) && !(cfg->gen_write_barriers && m_class_has_references (ins->klass)))
 						break;
 
 					if (!src_var) {
@@ -1343,6 +1347,7 @@ mono_decompose_vtype_opts (MonoCompile *cfg)
 
 					if (call->vret_in_reg) {
 						MonoCallInst *call2;
+						int align;
 
 						/* Replace the vcall with a scalar call */
 						MONO_INST_NEW_CALL (cfg, call2, OP_NOP);
@@ -1369,9 +1374,9 @@ mono_decompose_vtype_opts (MonoCompile *cfg)
 
 						/* Save the result */
 						if (dest_var->backend.is_pinvoke)
-							size = mono_class_native_size (mono_class_from_mono_type (dest_var->inst_vtype), NULL);
+							size = mono_class_native_size (mono_class_from_mono_type_internal (dest_var->inst_vtype), NULL);
 						else
-							size = mono_type_size (dest_var->inst_vtype, NULL);
+							size = mono_type_size (dest_var->inst_vtype, &align);
 						switch (size) {
 						case 1:
 							MONO_EMIT_NEW_STORE_MEMBASE (cfg, OP_STOREI1_MEMBASE_REG, dest->dreg, 0, call2->inst.dreg);
@@ -1548,9 +1553,9 @@ mono_decompose_array_access_opts (MonoCompile *cfg)
 					if (COMPILE_LLVM (cfg)) {
 						int index2_reg = alloc_preg (cfg);
 						MONO_EMIT_NEW_UNALU (cfg, OP_SEXT_I4, index2_reg, ins->sreg2);
-						MONO_EMIT_DEFAULT_BOUNDS_CHECK (cfg, ins->sreg1, ins->inst_imm, index2_reg, ins->flags & MONO_INST_FAULT);
+						MONO_EMIT_DEFAULT_BOUNDS_CHECK (cfg, ins->sreg1, ins->inst_imm, index2_reg, ins->flags & MONO_INST_FAULT, ins->inst_p0);
 					} else {
-						MONO_ARCH_EMIT_BOUNDS_CHECK (cfg, ins->sreg1, ins->inst_imm, ins->sreg2);
+						MONO_ARCH_EMIT_BOUNDS_CHECK (cfg, ins->sreg1, ins->inst_imm, ins->sreg2, ins->inst_p0);
 					}
 					break;
 				case OP_NEWARR:
@@ -1564,11 +1569,11 @@ mono_decompose_array_access_opts (MonoCompile *cfg)
 						dest->dreg = ins->dreg;
 					} else {
 						MonoClass *array_class = mono_class_create_array (ins->inst_newa_class, 1);
-						ERROR_DECL_VALUE (vt_error);
-						MonoVTable *vtable = mono_class_vtable_checked (cfg->domain, array_class, &vt_error);
+						ERROR_DECL (vt_error);
+						MonoVTable *vtable = mono_class_vtable_checked (cfg->domain, array_class, vt_error);
 						MonoMethod *managed_alloc = mono_gc_get_managed_array_allocator (array_class);
 
-						mono_error_assert_ok (&vt_error); /*This shall not fail since we check for this condition on OP_NEWARR creation*/
+						mono_error_assert_ok (vt_error); /*This shall not fail since we check for this condition on OP_NEWARR creation*/
 						NEW_VTABLECONST (cfg, iargs [0], vtable);
 						MONO_ADD_INS (cfg->cbb, iargs [0]);
 						MONO_INST_NEW (cfg, iargs [1], OP_MOVE);
@@ -1809,7 +1814,7 @@ mono_decompose_soft_float (MonoCompile *cfg)
 					MONO_INST_NEW (cfg, iargs [1], OP_ARG);
 					iargs [1]->dreg = ins->sreg2;
 
-					call = mono_emit_native_call (cfg, mono_icall_get_wrapper (info), info->sig, iargs);
+					call = mono_emit_jit_icall_id (cfg, mono_jit_icall_info_id (info), iargs);
 
 					MONO_INST_NEW (cfg, cmp, OP_ICOMPARE_IMM);
 					cmp->sreg1 = call->dreg;
@@ -1849,7 +1854,7 @@ mono_decompose_soft_float (MonoCompile *cfg)
 					MONO_INST_NEW (cfg, iargs [1], OP_ARG);
 					iargs [1]->dreg = ins->sreg2;
 
-					call = mono_emit_native_call (cfg, mono_icall_get_wrapper (info), info->sig, iargs);
+					call = mono_emit_jit_icall_id (cfg, mono_jit_icall_info_id (info), iargs);
 
 					MONO_EMIT_NEW_BIALU_IMM (cfg, OP_ICOMPARE_IMM, -1, call->dreg, 1);
 					MONO_EMIT_NEW_UNALU (cfg, OP_ICEQ, ins->dreg, -1);
@@ -1868,7 +1873,7 @@ mono_decompose_soft_float (MonoCompile *cfg)
 					MONO_INST_NEW (cfg, iargs [0], OP_ARG);
 					iargs [0]->dreg = ins->sreg1;
 
-					call = mono_emit_jit_icall (cfg, mono_isfinite, iargs);
+					call = mono_emit_jit_icall (cfg, mono_isfinite_double, iargs);
 
 					MONO_INST_NEW (cfg, cmp, OP_ICOMPARE_IMM);
 					cmp->sreg1 = call->dreg;
@@ -1983,6 +1988,13 @@ mono_local_emulate_ops (MonoCompile *cfg)
 					first_bb->code = first_bb->last_ins = NULL;
 					first_bb->in_count = first_bb->out_count = 0;
 					cfg->cbb = first_bb;
+
+					if (!saved_prev) {
+						/* first instruction of basic block got replaced, so create
+						 * dummy inst that points to start of basic block */
+						MONO_INST_NEW (cfg, saved_prev, OP_NOP);
+						saved_prev = bb->code;
+					}
 
 					/* ins is hanging, continue scanning the emitted code */
 					ins = saved_prev;

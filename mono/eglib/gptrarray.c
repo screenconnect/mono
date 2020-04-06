@@ -27,7 +27,7 @@
  * OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
  * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
- 
+#include "config.h"
 #include <stdlib.h>
 #include <glib.h>
 
@@ -214,7 +214,7 @@ void
 g_ptr_array_sort(GPtrArray *array, GCompareFunc compare)
 {
 	g_return_if_fail(array != NULL);
-	qsort(array->pdata, array->len, sizeof(gpointer), compare);
+	mono_qsort (array->pdata, array->len, sizeof(gpointer), compare);
 }
 
 void

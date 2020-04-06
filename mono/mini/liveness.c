@@ -42,7 +42,10 @@ static void mono_analyze_liveness2 (MonoCompile *cfg);
 
 typedef struct {
 	int capacity;
-	gpointer data [INLINE_SIZE];
+	union {
+		gpointer data [INLINE_SIZE];
+		GHashTable *hashtable;
+	};
 } MonoPtrSet;
 
 static void
@@ -55,7 +58,7 @@ static void
 mono_ptrset_destroy (MonoPtrSet *set)
 {
 	if (set->capacity > INLINE_SIZE)
-		g_hash_table_destroy (set->data [0]);
+		g_hash_table_destroy (set->hashtable);
 }
 
 static void
@@ -66,12 +69,12 @@ mono_ptrset_add (MonoPtrSet *set, gpointer val)
 		GHashTable *tmp = g_hash_table_new (NULL, NULL);
 		for (int i = 0; i < INLINE_SIZE; ++i)
 			g_hash_table_insert (tmp, set->data [i], set->data [i]);
-		set->data [0] = tmp;
+		set->hashtable = tmp;
 		++set->capacity;
 	}
 
 	if (set->capacity > INLINE_SIZE) {
-		g_hash_table_insert (set->data [0], val, val);
+		g_hash_table_insert (set->hashtable, val, val);
 	} else {
 		set->data [set->capacity] = val;
 		++set->capacity;
@@ -89,7 +92,7 @@ mono_ptrset_contains (MonoPtrSet *set, gpointer val)
 		return FALSE;
 	}
 
-	return g_hash_table_lookup (set->data [0], val) != NULL;
+	return g_hash_table_lookup (set->hashtable, val) != NULL;
 }
 
 
@@ -100,14 +103,14 @@ optimize_initlocals (MonoCompile *cfg);
  * 
  * allocates a MonoBitSet inside a memory pool
  */
-static inline MonoBitSet* 
+static MonoBitSet*
 mono_bitset_mp_new (MonoMemPool *mp, guint32 size, guint32 max_size)
 {
 	guint8 *mem = (guint8 *)mono_mempool_alloc0 (mp, size);
 	return mono_bitset_mem_new (mem, max_size, MONO_BITSET_DONT_FREE);
 }
 
-static inline MonoBitSet* 
+static MonoBitSet*
 mono_bitset_mp_new_noinit (MonoMemPool *mp, guint32 size, guint32 max_size)
 {
 	guint8 *mem = (guint8 *)mono_mempool_alloc (mp, size);
@@ -263,7 +266,7 @@ mono_liveness_handle_exception_clauses (MonoCompile *cfg)
 	mono_ptrset_destroy (&visited);
 }
 
-static inline void
+static void
 update_live_range (MonoMethodVar *var, int abs_pos)
 {
 	if (var->range.first_use.abs_pos > abs_pos)
@@ -599,7 +602,7 @@ mono_analyze_liveness (MonoCompile *cfg)
 				 * VOLATILE, since that would prevent it from being allocated to
 				 * registers.
 				 */
-				 if (!cfg->disable_deadce_vars && !(cfg->gshared && mono_method_signature (cfg->method)->hasthis && cfg->varinfo [vi->idx] == cfg->args [0]))
+				 if (!cfg->disable_deadce_vars && !(cfg->gshared && mono_method_signature_internal (cfg->method)->hasthis && cfg->varinfo [vi->idx] == cfg->args [0]))
 					 cfg->varinfo [vi->idx]->flags |= MONO_INST_IS_DEAD;
 			}
 			vi->range.first_use.abs_pos = 0;
@@ -839,7 +842,7 @@ mono_linterval_split (MonoCompile *cfg, MonoLiveInterval *interval, MonoLiveInte
 
 #ifdef ENABLE_LIVENESS2
 
-static inline void
+static void
 update_liveness2 (MonoCompile *cfg, MonoInst *ins, gboolean set_volatile, int inst_num, gint32 *last_use)
 {
 	const char *spec = INS_INFO (ins->opcode);
@@ -1039,7 +1042,7 @@ mono_analyze_liveness2 (MonoCompile *cfg)
 
 #endif
 
-static inline void
+static void
 update_liveness_gc (MonoCompile *cfg, MonoBasicBlock *bb, MonoInst *ins, gint32 *last_use, MonoMethodVar **vreg_to_varinfo, GSList **callsites)
 {
 	if (ins->opcode == OP_GC_LIVENESS_DEF || ins->opcode == OP_GC_LIVENESS_USE) {
@@ -1089,7 +1092,7 @@ update_liveness_gc (MonoCompile *cfg, MonoBasicBlock *bb, MonoInst *ins, gint32 
 	}
 }
 
-static inline int
+static int
 get_vreg_from_var (MonoCompile *cfg, MonoInst *var)
 {
 	if (var->opcode == OP_REGVAR)

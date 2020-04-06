@@ -12,6 +12,7 @@
 #include <winsock2.h>
 #include <windows.h>
 #include "mono/metadata/mono-security-windows-internals.h"
+#include <mono/metadata/handle.h>
 
 #if G_HAVE_API_SUPPORT(HAVE_CLASSIC_WINAPI_SUPPORT)
 #include <aclapi.h>
@@ -94,7 +95,7 @@ ves_icall_System_Security_Principal_WindowsIdentity_GetCurrentToken (MonoError *
 }
 
 gint32
-mono_security_win_get_token_name (gpointer token, gunichar2 ** uniname)
+mono_security_win_get_token_name (gpointer token, gunichar2 ** uniname, MonoError *error)
 {
 	gint32 size = 0;
 
@@ -120,7 +121,9 @@ ves_icall_System_Security_Principal_WindowsIdentity_GetTokenName (gpointer token
 
 	error_init (error);
 
-	size = mono_security_win_get_token_name (token, &uniname);
+	size = mono_security_win_get_token_name (token, &uniname, error);
+	if (size == 0 && !is_ok (error))
+		return NULL_HANDLE_STRING;
 
 	if (size > 0) {
 		result = mono_string_new_utf16_handle (mono_domain_get (), uniname, size, error);
@@ -149,14 +152,14 @@ ves_icall_System_Security_Principal_WindowsIdentity_GetUserToken (MonoStringHand
 }
 
 #if G_HAVE_API_SUPPORT(HAVE_CLASSIC_WINAPI_SUPPORT)
-MonoArray*
-ves_icall_System_Security_Principal_WindowsIdentity_GetRoles (gpointer token)
+MonoArrayHandle
+ves_icall_System_Security_Principal_WindowsIdentity_GetRoles (gpointer token, MonoError *error)
 {
-	ERROR_DECL (error);
-	MonoArray *array = NULL;
+	MonoArrayHandle array;
+	MonoStringHandle str_h;
 	MonoDomain *domain = mono_domain_get ();
-
 	gint32 size = 0;
+	gboolean created = FALSE;
 
 	GetTokenInformation (token, TokenGroups, NULL, size, (PDWORD)&size);
 	if (size > 0) {
@@ -165,25 +168,27 @@ ves_icall_System_Security_Principal_WindowsIdentity_GetRoles (gpointer token)
 			int i=0;
 			int num = tg->GroupCount;
 
-			array = mono_array_new_checked (domain, mono_get_string_class (), num, error);
-			if (mono_error_set_pending_exception (error)) {
+			array = mono_array_new_handle (domain, mono_get_string_class (), num, error);
+			if (!is_ok (error)) {
 				g_free (tg);
-				return NULL;
+				return NULL_HANDLE_ARRAY;
 			}
+			created = TRUE;
 
+			str_h = MONO_HANDLE_NEW (MonoString, NULL);
 			for (i=0; i < num; i++) {
 				gint32 size = 0;
 				gunichar2 *uniname = GetSidName (NULL, tg->Groups [i].Sid, &size);
 
 				if (uniname) {
 					MonoString *str = mono_string_new_utf16_checked (domain, uniname, size, error);
+					MONO_HANDLE_ASSIGN_RAW (str_h, str);
 					if (!is_ok (error)) {
 						g_free (uniname);
 						g_free (tg);
-						mono_error_set_pending_exception (error);
-						return NULL;
+						return NULL_HANDLE_ARRAY;
 					}
-					mono_array_setref (array, i, str);
+					MONO_HANDLE_ARRAY_SETREF (array, i, str_h);
 					g_free (uniname);
 				}
 			}
@@ -191,16 +196,16 @@ ves_icall_System_Security_Principal_WindowsIdentity_GetRoles (gpointer token)
 		g_free (tg);
 	}
 
-	if (!array) {
+	if (!created) {
 		/* return empty array of string, i.e. string [0] */
-		array = mono_array_new_checked (domain, mono_get_string_class (), 0, error);
-		mono_error_set_pending_exception (error);
+		array = mono_array_new_handle (domain, mono_get_string_class (), 0, error);
+		return_val_if_nok (error, NULL_HANDLE_ARRAY);
 	}
 	return array;
 }
 #endif /* G_HAVE_API_SUPPORT(HAVE_CLASSIC_WINAPI_SUPPORT) */
 
-gboolean
+MonoBoolean
 ves_icall_System_Security_Principal_WindowsImpersonationContext_CloseToken (gpointer token, MonoError *error)
 {
 	return !!CloseHandle (token);
@@ -211,11 +216,11 @@ gpointer
 ves_icall_System_Security_Principal_WindowsImpersonationContext_DuplicateToken (gpointer token, MonoError *error)
 {
 	gpointer dupe = NULL;
-	return DuplicateToken (token, SecurityImpersonation, &dupe) ? dup : NULL;
+	return DuplicateToken (token, SecurityImpersonation, &dupe) ? dupe : NULL;
 }
 #endif /* G_HAVE_API_SUPPORT(HAVE_CLASSIC_WINAPI_SUPPORT) */
 
-gboolean
+MonoBoolean
 ves_icall_System_Security_Principal_WindowsPrincipal_IsMemberOfGroupId (gpointer user, gpointer group, MonoError *error)
 {
 	/* The convertion from an ID to a string is done in managed code for Windows */
@@ -223,7 +228,7 @@ ves_icall_System_Security_Principal_WindowsPrincipal_IsMemberOfGroupId (gpointer
 	return FALSE;
 }
 
-gboolean
+MonoBoolean
 ves_icall_System_Security_Principal_WindowsPrincipal_IsMemberOfGroupName (gpointer user, const gchar *group, MonoError *error)
 {
 	/* Windows version use a cache built using WindowsIdentity._GetRoles */

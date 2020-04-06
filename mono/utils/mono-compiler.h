@@ -30,71 +30,67 @@
 #ifdef _MSC_VER
 
 #include <math.h>
-
-#if _MSC_VER < 1800 /* VS 2013 */
-#define strtoull _strtoui64
-#endif
-
 #include <float.h>
-#define trunc(x)	(((x) < 0) ? ceil((x)) : floor((x)))
-#if _MSC_VER < 1800 /* VS 2013 */
-#define isnan(x)	_isnan(x)
-#define isinf(x)	(_isnan(x) ? 0 : (_fpclass(x) == _FPCLASS_NINF) ? -1 : (_fpclass(x) == _FPCLASS_PINF) ? 1 : 0)
-#define isnormal(x)	_finite(x)
-#endif
 
 #define popen		_popen
 #define pclose		_pclose
-
 #include <direct.h>
 #define mkdir(x)	_mkdir(x)
 
 #define __func__ __FUNCTION__
 
-#include <BaseTsd.h>
-typedef SSIZE_T ssize_t;
+#include <stddef.h>
+#include <stdint.h>
 
-/*
- * SSIZE_MAX is not defined in MSVC, so define it here.
- *
- * These values come from MinGW64, and are public domain.
- *
- */
+// ssize_t and SSIZE_MAX are Posix, define for Windows.
+typedef ptrdiff_t ssize_t;
 #ifndef SSIZE_MAX
-#ifdef _WIN64
-#define SSIZE_MAX _I64_MAX
-#else
-#define SSIZE_MAX INT_MAX
-#endif
+#define SSIZE_MAX INTPTR_MAX
 #endif
 
 #endif /* _MSC_VER */
 
-#ifdef _MSC_VER
-// Quiet Visual Studio linker warning, LNK4221, in cases when this source file intentional ends up empty.
-#define MONO_EMPTY_SOURCE_FILE(x) void __mono_win32_ ## x ## _quiet_lnk4221 (void) {}
-#else
-#define MONO_EMPTY_SOURCE_FILE(x)
-#endif
+// Quiet Visual Studio linker warning, LNK4221: This object file does not define any previously
+// undefined public symbols, so it will not be used by any link operation that consumes this library.
+// And other linkers, e.g. older Apple.
+#define MONO_EMPTY_SOURCE_FILE(x) extern const char mono_quash_linker_empty_file_warning_ ## x; \
+				  const char mono_quash_linker_empty_file_warning_ ## x = 0;
 
 #ifdef _MSC_VER
 #define MONO_PRAGMA_WARNING_PUSH() __pragma(warning (push))
 #define MONO_PRAGMA_WARNING_DISABLE(x) __pragma(warning (disable:x))
 #define MONO_PRAGMA_WARNING_POP() __pragma(warning (pop))
+
+#define MONO_DISABLE_WARNING(x) \
+		MONO_PRAGMA_WARNING_PUSH() \
+		MONO_PRAGMA_WARNING_DISABLE(x)
+
+#define MONO_RESTORE_WARNING \
+		MONO_PRAGMA_WARNING_POP()
 #else
 #define MONO_PRAGMA_WARNING_PUSH()
 #define MONO_PRAGMA_WARNING_DISABLE(x)
 #define MONO_PRAGMA_WARNING_POP()
+#define MONO_DISABLE_WARNING(x)
+#define MONO_RESTORE_WARNING
 #endif
 
-#if !defined(_MSC_VER) && !defined(HOST_SOLARIS) && !defined(_WIN32) && !defined(__CYGWIN__) && !defined(MONOTOUCH) && HAVE_VISIBILITY_HIDDEN
-#if MONO_LLVM_LOADED
-#define MONO_LLVM_INTERNAL MONO_API_NO_EXTERN_C
+// If MONO_LLVM_INTERNAL changes, update mono_debug_method_lookup_location declaration.
+#if !defined(_MSC_VER) && !defined(HOST_SOLARIS) && !defined(_WIN32) && !defined(__CYGWIN__) && !defined(MONOTOUCH) && HAVE_VISIBILITY_HIDDEN && MONO_LLVM_LOADED
+
+// Normally use this.
+#define MONO_LLVM_INTERNAL			MONO_API
+
+// Use these for extern data.
+#define MONO_LLVM_INTERNAL_NO_EXTERN_C		MONO_API_NO_EXTERN_C
+#define MONO_LLVM_INTERNAL_EXTERN_C_BEGIN	G_BEGIN_DECLS
+#define MONO_LLVM_INTERNAL_EXTERN_C_END		G_END_DECLS
+
 #else
-#define MONO_LLVM_INTERNAL
-#endif
-#else
-#define MONO_LLVM_INTERNAL 
+#define MONO_LLVM_INTERNAL			/* nothing */
+#define MONO_LLVM_INTERNAL_NO_EXTERN_C		/* nothing */
+#define MONO_LLVM_INTERNAL_EXTERN_C_BEGIN	/* nothing */
+#define MONO_LLVM_INTERNAL_EXTERN_C_END		/* nothing */
 #endif
 
 /* Used to mark internal functions used by the profiler modules */
@@ -125,10 +121,12 @@ typedef SSIZE_T ssize_t;
 #define MONO_COLD
 #endif
 
-#ifdef __GNUC__
+#if defined (__clang__)
+#define MONO_NO_OPTIMIZATION __attribute__ ((optnone))
+#elif __GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ >= 4)
 #define MONO_NO_OPTIMIZATION __attribute__ ((optimize("O0")))
 #else
-#define MONO_NO_OPTIMIZATION
+#define MONO_NO_OPTIMIZATION /* nothing */
 #endif
 
 #if defined (__GNUC__) && defined (__GNUC_MINOR__) && defined (__GNUC_PATCHLEVEL__)
@@ -222,4 +220,3 @@ ssize_t sendfile (int out_fd, int in_fd, off_t* offset, size_t count);
 #endif /* HOST_ANDROID && ANDROID_UNIFIED_HEADERS */
 
 #endif /* __UTILS_MONO_COMPILER_H__*/
-

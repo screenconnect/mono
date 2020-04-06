@@ -2,24 +2,16 @@ ACLOCAL_AMFLAGS = -I m4
 
 AM_CFLAGS = $(WERROR_CFLAGS)
 
-MONOTOUCH_SUBDIRS = $(libgc_dir) mono
+SUBDIRS = @MONO_SUBDIRS@
+noinst_SUBDIRS = @MONO_NOINST_SUBDIRS@
+DIST_SUBDIRS = $(SUBDIRS) m4 netcore netcore/corerun
 
-# Some tools might not build when cross-compiling
-if CROSS_COMPILING
-tools_dir =
-else
-tools_dir = tools
-endif
+if !ENABLE_NETCORE
 
-SUBDIRS = mk po $(libgc_dir) llvm mono $(ikvm_native_dir) support data runtime scripts man samples $(tools_dir) msvc $(docs_dir) acceptance-tests
-# Keep in sync with SUBDIRS
-DIST_SUBDIRS = m4 mk po $(libgc_dir) llvm mono ikvm-native support data runtime scripts man samples tools msvc docs acceptance-tests
+all: $(update_submodules)
 
-all: update_submodules
-
-SUBMODULE_ERROR='Could not recursively update all git submodules. You may experience compilation problems if some submodules are out of date'
 update_submodules:
-	@$(srcdir)/scripts/update_submodules.sh
+	@cd $(srcdir) && scripts/update_submodules.sh
 
 .PHONY: update_submodules
 
@@ -32,9 +24,10 @@ EXTRA_DIST= \
 	winconfig.h 		\
 	code_of_conduct.md 	\
 	external		\
+	netcore/Makefile	\
 	mcs/class/referencesource
 
-DISTCHECK_CONFIGURE_FLAGS = EXTERNAL_MCS=false EXTERNAL_RUNTIME=false
+DISTCHECK_CONFIGURE_FLAGS = EXTERNAL_RUNTIME=false
 
 # Distribute the 'mcs' tree too
 GIT_DIR ?= $(srcdir)/.git
@@ -50,8 +43,11 @@ dist-hook:
 	rm -f `find $(top_distdir)/external -path '*\.Plo'`
 	rm -f `find $(top_distdir)/external -name '\.dirstamp'`
 	rm -f `find $(top_distdir)/external -path '*\.exe' -not -path '*/roslyn-binaries/*'`
-	rm -f `find $(top_distdir)/external -path '*\.dll' -not -path '*/binary-reference-assemblies/*' -not -path '*/roslyn-binaries/*'`
-	rm -rf "$(top_distdir)/external/linker/linker/Tests"
+	rm -f `find $(top_distdir)/external -path '*\.dll' -not -path '*/binary-reference-assemblies/*' -not -path '*/roslyn-binaries/*' -not -path '*/helix-binaries/*'`
+	rm -rf "$(top_distdir)/external/linker/test"
+	rm -rf "$(top_distdir)/external/llvm-project/lldb/test"
+	rm -rf "$(top_distdir)/external/llvm-project/libcxx/test"
+	rm -rf "$(top_distdir)/external/llvm-project/clang/test"
 
 pkgconfigdir = $(libdir)/pkgconfig
 noinst_DATA = mono-uninstalled.pc
@@ -66,9 +62,15 @@ if BITCODE
 BITCODE_CHECK=yes
 endif
 
+if DEFAULT_TESTS
+CI_TEST_SCRIPT=$(srcdir)/scripts/ci/run-test-default.sh
+else
+CI_TEST_SCRIPT=$(srcdir)/scripts/ci/run-test-$(TEST_PROFILE).sh
+endif
+
 .PHONY: check-ci
 check-ci:
-	MONO_LLVMONLY=$(BITCODE_CHECK) $(srcdir)/scripts/ci/run-test-$(TEST_PROFILE).sh
+	MONO_LLVMONLY=$(BITCODE_CHECK) $(CI_TEST_SCRIPT)
 
 .PHONY: validate do-build-mono-mcs mcs-do-clean mcs-do-tests
 validate: do-build-mono-mcs
@@ -92,30 +94,10 @@ mcs-do-compiler-tests:
 bootstrap-world: compiler-tests
 	$(MAKE) install
 
-if INSTALL_MONOTOUCH
-monotouch-do-build: config.h
-	@list='$(MONOTOUCH_SUBDIRS)'; for subdir in $$list; do \
-	  case "x$$subdir" in \
-		xmono ) target="monotouch-do-build";; \
-		* ) target="all";; \
-	  esac; \
-	  echo "Making $$target in $$subdir"; \
-	  (cd $$subdir && $(MAKE) $(AM_MAKEFLAGS) $$target); \
-        done;
-	(cd runtime && $(MAKE) $(AM_MAKEFLAGS) monotouch-do-build)
-
-monotouch-do-clean:
-	@list='$(MONOTOUCH_SUBDIRS)'; for subdir in $$list; do \
-	  case "x$$subdir" in \
-		xmono ) target="monotouch-do-clean";; \
-		* ) target="clean";; \
-	  esac; \
-	  echo "Making $$target in $$subdir"; \
-	  (cd $$subdir && $(MAKE) $(AM_MAKEFLAGS) $$target); \
-        done;
-	(cd runtime && $(MAKE) $(AM_MAKEFLAGS) monotouch-do-clean)
-
-endif
+install:
+	for mydir in $(filter-out $(noinst_SUBDIRS),$(SUBDIRS)); do \
+	  (cd $${mydir} && ${MAKE} install) \
+	done
 
 update-csproj:
 	-rm msvc/scripts/order 
@@ -159,3 +141,5 @@ update-solution-files:
 
 update-solution-files-with-tests:
 	$(MAKE) "GENPROJ_ARGS=2012 true true" update-solution-files
+
+endif

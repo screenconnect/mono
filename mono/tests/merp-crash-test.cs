@@ -11,15 +11,35 @@ class C
 {
 	class CrasherClass
 	{
-		public static List<Tuple<String, Action>> Crashers;
+		public struct Crasher {
+			public string Name {get;}
+			public Action Action {get; }
+
+			public Action<object> Validator {get; }
+
+			public Crasher (string name, Action action, Action<object> validator = null)
+			{
+				Name = name;
+				Action = action;
+				Validator = validator;
+			}
+		}
+
+		public class ValidationException : Exception {
+			public ValidationException () : base () {}
+			public ValidationException (string msg) : base (msg) {}
+			public ValidationException (string msg, Exception inner) : base (msg, inner) {}
+		}
+
+		public static List<Crasher> Crashers;
 		public static int StresserIndex;
 
 		static CrasherClass ()
 		{
-			Crashers = new List<Tuple<String, Action>> ();
+			Crashers = new List<Crasher> ();
 
 			// Basic functionality
-			Crashers.Add(new Tuple<String, Action> ("MerpCrashManaged", MerpCrashManaged));
+			Crashers.Add(new Crasher ("MerpCrashManaged", MerpCrashManaged));
 			//  Run this test for stress tests
 			//
 			//  I've ran a burn-in with all of them of
@@ -28,22 +48,38 @@ class C
 			//  Feel free to change by moving this line.
 			StresserIndex = Crashers.Count - 1;
 
-			Crashers.Add(new Tuple<String, Action> ("MerpCrashMalloc", MerpCrashMalloc));
+			Crashers.Add(new Crasher ("MerpCrashMalloc", MerpCrashMalloc));
+			Crashers.Add(new Crasher ("MerpCrashFailFast", MerpCrashFailFast, ValidateFailFastMsg));
 
-			Crashers.Add(new Tuple<String, Action> ("MerpCrashNullFp", MerpCrashNullFp));
-			Crashers.Add(new Tuple<String, Action> ("MerpCrashExceptionHook", MerpCrashUnhandledExceptionHook));
+			Crashers.Add(new Crasher ("MerpCrashNullFp", MerpCrashNullFp));
+			Crashers.Add(new Crasher ("MerpCrashExceptionHook", MerpCrashUnhandledExceptionHook));
 
 			// Specific Edge Cases
-			Crashers.Add(new Tuple<String, Action> ("MerpCrashDladdr", MerpCrashDladdr));
-			Crashers.Add(new Tuple<String, Action> ("MerpCrashSnprintf", MerpCrashSnprintf));
-			Crashers.Add(new Tuple<String, Action> ("MerpCrashDomainUnload", MerpCrashDomainUnload));
-			Crashers.Add(new Tuple<String, Action> ("MerpCrashUnbalancedGCSafe", MerpCrashUnbalancedGCSafe));
+			Crashers.Add(new Crasher ("MerpCrashDladdr", MerpCrashDladdr));
+			Crashers.Add(new Crasher ("MerpCrashSnprintf", MerpCrashSnprintf));
+			Crashers.Add(new Crasher ("MerpCrashDomainUnload", MerpCrashDomainUnload));
+			Crashers.Add(new Crasher ("MerpCrashUnbalancedGCSafe", MerpCrashUnbalancedGCSafe));
 		}
 
 		public static void 
 		MerpCrashManaged ()
 		{
 			unsafe { Console.WriteLine("{0}", *(int*) -1); }
+		}
+
+		const string failfastMsg = "abcd efgh";
+
+		public static void
+		MerpCrashFailFast ()
+		{
+			Environment.FailFast (failfastMsg);
+		}
+
+		public static void ValidateFailFastMsg (object json)
+		{
+			string s = jsonGetKeys (json, "payload", "failfast_message") as string;
+			if (s != failfastMsg)
+				throw new ValidationException (String.Format ("incorrect fail fast message (expected: {0}, got: {1})", failfastMsg, s));
 		}
 
 		[DllImport("libtest")]
@@ -125,15 +161,29 @@ class C
 			Console.WriteLine ("And now to crash inside the hook");
 			mono_test_MerpCrashUnhandledExceptionHook ();
 		}
+
+
+		private static object jsonGetKey (object o, string key) => (o as Dictionary<string,object>)[key];
+		private static object jsonGetKeys (object o, params string[] keys) {
+			try {
+				foreach (var key in keys) {
+					o = jsonGetKey (o, key);
+				}
+				return o;
+			} catch (KeyNotFoundException e) {
+				throw new ValidationException (String.Format ("{0}, key not found, looking for key path [{1}]", e.ToString(), String.Join (", ", keys)));
+			}
+		}
+
 	}
 
-	static string configDir = "./";
+	static string configDir = "./merp-crash-test/";
 
 	public static void 
 	CrashWithMerp (int testNum)
 	{
 		SetupCrash (configDir);
-		CrasherClass.Crashers [Convert.ToInt32 (testNum)].Item2 ();
+		CrasherClass.Crashers [Convert.ToInt32 (testNum)].Action ();
 	}
 
 	public static string env = Environment.GetEnvironmentVariable ("MONO_PATH");
@@ -161,7 +211,7 @@ class C
 	}
 
 	public static void 
-	TestValidateAndCleanup (string configDir, bool silent)
+	TestValidate (string configDir, bool silent, Action<object> validator = null)
 	{
 		DumpLogCheck ();
 
@@ -180,6 +230,8 @@ class C
 			if (!silent)
 				Console.WriteLine ("Xml file {0}", text);
 			File.Delete (xmlFilePath);
+		} else {
+			Console.WriteLine ("Xml file {0} missing", xmlFilePath);
 		}
 
 		if (paramsFileExists) {
@@ -187,6 +239,8 @@ class C
 			if (!silent)
 				Console.WriteLine ("Params file {0}", text);
 			File.Delete (paramsFilePath);
+		} else {
+			Console.WriteLine ("Params file {0} missing", paramsFilePath);
 		}
 
 		if (crashFileExists) {
@@ -200,12 +254,18 @@ class C
 				Console.WriteLine("Validating: {0}",  crashFile);
 			try {
 				var obj = checker.DeserializeObject (crashFile);
+				if (validator is object)
+					validator (obj);
+			} catch (CrasherClass.ValidationException e) {
+				throw new Exception (String.Format ("Validation failed '{0}', json: {1}", e.Message, crashFile));
 			} catch (Exception e) {
 				throw new Exception (String.Format ("Invalid json: {0}", crashFile));
 			}
 
 			File.Delete (crashFilePath);
 			// Assert it has the required merp fields
+		} else {
+			Console.WriteLine ("Crash file {0} missing", crashFilePath);
 		}
 
 		if (!xmlFileExists)
@@ -221,24 +281,7 @@ class C
 	public static void
 	Cleanup (string configDir)
 	{
-		var xmlFilePath = String.Format("{0}CustomLogsMetadata.xml", configDir);
-		var paramsFilePath = String.Format("{0}MERP.uploadparams.txt", configDir);
-		var crashFilePath = String.Format("{0}lastcrashlog.txt", configDir);
-
-		// Fixme: Maybe parse these json files rather than
-		// just checking they exist
-		var xmlFileExists = File.Exists (xmlFilePath);
-		var paramsFileExists = File.Exists (paramsFilePath);
-		var crashFileExists = File.Exists (crashFilePath);
-
-		if (xmlFileExists)
-			File.Delete (xmlFilePath);
-
-		if (paramsFileExists)
-			File.Delete (paramsFilePath);
-
-		if (crashFileExists)
-			File.Delete (crashFilePath);
+		Directory.Delete (configDir, true);
 	}
 
 	static void DumpLogSet ()
@@ -281,16 +324,29 @@ class C
 		pi.Arguments = String.Format ("{0} {1}", asm, testNum);;
 		pi.Environment ["MONO_PATH"] = env;
 
-		if (!silent)
+		if (!silent) {
+			Console.WriteLine ("Running {0}", CrasherClass.Crashers [testNum].Name);
 			Console.WriteLine ("MONO_PATH={0} {1} {2} {3}", env, runtime, asm, testNum);
+		}
 
-		var process = Diag.Process.Start (pi);
-		process.WaitForExit ();
+		if (Directory.Exists (configDir)) {
+			Console.WriteLine ("Cleaning up left over configDir {0}", configDir);
+			Cleanup (configDir);
+		}
 
-		TestValidateAndCleanup (configDir, silent);
+		Directory.CreateDirectory (configDir);
+
+		try {
+			var process = Diag.Process.Start (pi);
+			process.WaitForExit ();
+
+			TestValidate (configDir, silent, CrasherClass.Crashers [testNum].Validator);
+		} finally {
+			Cleanup (configDir);
+		}
 	}
 
-	public static void Main (string [] args)
+	public static int Main (string [] args)
 	{
 		if (args.Length == 0) {
 			string processExe = Diag.Process.GetCurrentProcess ().MainModule.FileName;
@@ -321,14 +377,14 @@ class C
 			if (failure_count > 0) {
 				for (int i=0; i < CrasherClass.Crashers.Count; i++) {
 					if (failures [i] != null) {
-						Console.WriteLine ("Crash reporter failed test {0}", CrasherClass.Crashers [i].Item1);
+						Console.WriteLine ("Crash reporter failed test {0}", CrasherClass.Crashers [i].Name);
 						Console.WriteLine ("Cause: {0}\n{1}\n", failures [i].Message, failures [i].StackTrace);
 					}
 				}
 			}
 
 			if (failure_count > 0)
-				return;
+				return 1;
 
 			Console.WriteLine ("\n\n##################");
 			Console.WriteLine ("Merp Stress Test:");
@@ -344,15 +400,15 @@ class C
 					SpawnCrashingRuntime (processExe, CrasherClass.StresserIndex, true);
 				} catch (Exception e) {
 					Console.WriteLine ("Stress test caught failure. Shutting down after {1} iterations.\n {0} \n\n", e.InnerException, iter);
-					Cleanup (configDir);
 					throw;
 				}
 			}
 			Console.WriteLine ("Ending crash stress test. No failures caught.\n");
 
-			return;
+			return 0;
 		} else {
 			CrashWithMerp (Convert.ToInt32 (args [0]));
+			return 0;
 		}
 	}
 }

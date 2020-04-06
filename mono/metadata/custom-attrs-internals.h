@@ -17,6 +17,9 @@ typedef gboolean (*MonoAssemblyMetadataCustomAttrIterFunc) (MonoImage *image, gu
 void
 mono_assembly_metadata_foreach_custom_attr (MonoAssembly *assembly, MonoAssemblyMetadataCustomAttrIterFunc func, gpointer user_data);
 
+void
+mono_class_metadata_foreach_custom_attr (MonoClass *klass, MonoAssemblyMetadataCustomAttrIterFunc func, gpointer user_data);
+
 gboolean
 mono_assembly_is_weak_field (MonoImage *image, guint32 field_idx);
 
@@ -24,8 +27,11 @@ void
 mono_assembly_init_weak_fields (MonoImage *image);
 
 void
+mono_reflection_create_custom_attr_data_args (MonoImage *image, MonoMethod *method, const guchar *data, guint32 len, MonoArrayHandleOut typed_args_out, MonoArrayHandleOut named_args_out, CattrNamedArg **named_arg_info, MonoError *error);
+
+void
 mono_reflection_create_custom_attr_data_args_noalloc (MonoImage *image, MonoMethod *method, const guchar *data, guint32 len,
-													  gpointer **typed_args, gpointer **named_args, int *num_named_args,
+													  gpointer **typed_args_out, gpointer **named_args_out, int *num_named_args,
 													  CattrNamedArg **named_arg_info, MonoError *error);
 
 #endif  /* __MONO_METADATA_REFLECTION_CUSTOM_ATTRS_INTERNALS_H__ */

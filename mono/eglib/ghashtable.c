@@ -25,9 +25,11 @@
  * OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
  * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
+#include "config.h"
 #include <stdio.h>
 #include <math.h>
 #include <glib.h>
+#include <eglib-remap.h> // Remove the cast macros and restore the rename macros.
 
 typedef struct _Slot Slot;
 
@@ -301,6 +303,14 @@ g_hash_table_size (GHashTable *hash)
 	g_return_val_if_fail (hash != NULL, 0);
 	
 	return hash->in_use;
+}
+
+gboolean
+g_hash_table_contains (GHashTable *hash, gconstpointer key)
+{
+	g_return_val_if_fail (key != NULL, FALSE);
+
+	return g_hash_table_lookup_extended (hash, key, NULL, NULL);
 }
 
 gpointer
@@ -656,7 +666,7 @@ g_int_hash (gconstpointer v1)
 gboolean
 g_str_equal (gconstpointer v1, gconstpointer v2)
 {
-	return strcmp (v1, v2) == 0;
+	return v1 == v2 || strcmp ((const char*)v1, (const char*)v2) == 0;
 }
 
 guint

@@ -22,6 +22,7 @@ using NUnit.Framework;
 
 namespace MonoTests.System.Threading
 {
+#if !DISABLE_SECURITY
 	// These tests seem to hang the 2.0 framework. So they are disabled for now
 	// Don't reenable them until you can run a few thousand times on an SMP box.
 	[Category ("NotWorking")]
@@ -84,6 +85,7 @@ namespace MonoTests.System.Threading
 			Assert.AreEqual ("good", Thread.CurrentPrincipal.Identity.Name, "#2");
 		}
 	}
+#endif
 
 	[TestFixture]
 	[Category("MobileNotWorking")] // Abort #10240
@@ -309,6 +311,7 @@ namespace MonoTests.System.Threading
 
 		[Test]
 		[Category ("NotDotNet")] // it hangs.
+		[Category ("MultiThreaded")]
 		public void TestStart()
 		{
 		{
@@ -452,6 +455,7 @@ namespace MonoTests.System.Threading
 		}
 
 		[Test]
+		[Category ("MultiThreaded")]
 		public void TestUndivisibleByPageSizeMaxStackSize ()
 		{
 			const int undivisible_stacksize = 1048573;
@@ -698,6 +702,7 @@ namespace MonoTests.System.Threading
 				"#103 Wrong Thread State: " + TestThread.ThreadState.ToString ());
 		}
 
+#if !DISABLE_SECURITY
 		[Test]
 		[Ignore ("see comment below.")]
 		public void CurrentPrincipal_PrincipalPolicy_NoPrincipal () 
@@ -771,6 +776,7 @@ namespace MonoTests.System.Threading
 #endif
 			}
 		}
+#endif
 
 		int counter = 0;
 
@@ -833,6 +839,7 @@ namespace MonoTests.System.Threading
 #endif
 
 		[Test]
+		[Category ("MultiThreaded")]
 		public void Test_Interrupt ()
 		{
 			ManualResetEvent mre = new ManualResetEvent (false);

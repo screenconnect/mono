@@ -61,7 +61,7 @@
 /* If the bank is mirrored return the true logical bank that the register in the
  * physical register bank is allocated to.
  */
-static inline int translate_bank (MonoRegState *rs, int bank, int hreg) {
+static int translate_bank (MonoRegState *rs, int bank, int hreg) {
 	return is_hreg_mirrored (rs, bank, hreg) ? get_mirrored_bank (bank) : bank;
 }
 
@@ -125,16 +125,16 @@ static const regmask_t regbank_callee_regs [] = {
 };
 
 static const int regbank_spill_var_size[] = {
-	sizeof (mgreg_t),
+	sizeof (target_mgreg_t),
 	sizeof (double),
-	sizeof (mgreg_t),
-	sizeof (mgreg_t),
+	sizeof (target_mgreg_t),
+	sizeof (target_mgreg_t),
 	16 /*FIXME make this a constant. Maybe MONO_ARCH_SIMD_VECTOR_SIZE? */
 };
 
 #define DEBUG(a) MINI_DEBUG(cfg->verbose_level, 3, a;)
 
-static inline void
+static void
 mono_regstate_assign (MonoRegState *rs)
 {
 #ifdef MONO_ARCH_USE_SHARED_FP_SIMD_BANK
@@ -164,7 +164,7 @@ mono_regstate_assign (MonoRegState *rs)
 #endif
 }
 
-static inline int
+static int
 mono_regstate_alloc_int (MonoRegState *rs, regmask_t allow)
 {
 	regmask_t mask = allow & rs->ifree_mask;
@@ -195,7 +195,7 @@ mono_regstate_alloc_int (MonoRegState *rs, regmask_t allow)
 #endif
 }
 
-static inline void
+static void
 mono_regstate_free_int (MonoRegState *rs, int reg)
 {
 	if (reg >= 0) {
@@ -204,7 +204,7 @@ mono_regstate_free_int (MonoRegState *rs, int reg)
 	}
 }
 
-static inline int
+static int
 mono_regstate_alloc_general (MonoRegState *rs, regmask_t allow, int bank)
 {
 	int i;
@@ -225,7 +225,7 @@ mono_regstate_alloc_general (MonoRegState *rs, regmask_t allow, int bank)
 	return -1;
 }
 
-static inline void
+static void
 mono_regstate_free_general (MonoRegState *rs, int reg, int bank)
 {
 	int mirrored_bank;
@@ -268,12 +268,12 @@ mono_call_inst_add_outarg_reg (MonoCompile *cfg, MonoCallInst *call, int vreg, i
 	if (G_UNLIKELY (bank)) {
 		g_assert (vreg >= regbank_size [bank]);
 		g_assert (hreg < regbank_size [bank]);
-		call->used_fregs |= 1 << hreg;
+		call->used_fregs |= (regmask_t)1 << hreg;
 		call->out_freg_args = g_slist_append_mempool (cfg->mempool, call->out_freg_args, (gpointer)(gssize)(regpair));
 	} else {
 		g_assert (vreg >= MONO_MAX_IREGS);
 		g_assert (hreg < MONO_MAX_IREGS);
-		call->used_iregs |= 1 << hreg;
+		call->used_iregs |= (regmask_t)1 << hreg;
 		call->out_ireg_args = g_slist_append_mempool (cfg->mempool, call->out_ireg_args, (gpointer)(gssize)(regpair));
 	}
 }
@@ -314,7 +314,7 @@ resize_spill_info (MonoCompile *cfg, int bank)
  * returns the offset used by spillvar. It allocates a new
  * spill variable if necessary. 
  */
-static inline int
+static int
 mono_spillvar_offset (MonoCompile *cfg, int spillvar, int bank)
 {
 	MonoSpillInfo *info;
@@ -330,14 +330,14 @@ mono_spillvar_offset (MonoCompile *cfg, int spillvar, int bank)
 	 */
 	info = &cfg->spill_info [bank][spillvar];
 	if (info->offset == -1) {
-		cfg->stack_offset += sizeof (mgreg_t) - 1;
-		cfg->stack_offset &= ~(sizeof (mgreg_t) - 1);
+		cfg->stack_offset += sizeof (target_mgreg_t) - 1;
+		cfg->stack_offset &= ~(sizeof (target_mgreg_t) - 1);
 
 		g_assert (bank < MONO_NUM_REGBANKS);
 		if (G_UNLIKELY (bank))
 			size = regbank_spill_var_size [bank];
 		else
-			size = sizeof (mgreg_t);
+			size = sizeof (target_mgreg_t);
 
 		if (cfg->flags & MONO_CFG_HAS_SPILLUP) {
 			cfg->stack_offset += size - 1;
@@ -438,7 +438,7 @@ mono_print_ins_index_strbuf (int i, MonoInst *ins)
 		g_string_append_printf (sbuf, "\t%-2d %s", i, mono_inst_name (ins->opcode));
 	else
 		g_string_append_printf (sbuf, " %s", mono_inst_name (ins->opcode));
-	if (spec == MONO_ARCH_CPU_SPEC) {
+	if (spec == (gpointer)/*FIXME*/MONO_ARCH_CPU_SPEC) {
 		gboolean dest_base = FALSE;
 		switch (ins->opcode) {
 		case OP_STOREV_MEMBASE:
@@ -604,6 +604,8 @@ mono_print_ins_index_strbuf (int i, MonoInst *ins)
 	case OP_RCALL_MEMBASE: {
 		MonoCallInst *call = (MonoCallInst*)ins;
 		GSList *list;
+		MonoJitICallId jit_icall_id;
+		MonoMethod *method;
 
 		if (ins->opcode == OP_VCALL || ins->opcode == OP_VCALL_REG || ins->opcode == OP_VCALL_MEMBASE) {
 			/*
@@ -614,8 +616,8 @@ mono_print_ins_index_strbuf (int i, MonoInst *ins)
 				g_string_append_printf (sbuf, " R%d <-", ins->dreg);
 		}
 
-		if (call->method) {
-			char *full_name = mono_method_full_name (call->method, TRUE);
+		if ((method = call->method)) {
+			char *full_name = mono_method_get_full_name (method);
 			g_string_append_printf (sbuf, " [%s]", full_name);
 			g_free (full_name);
 		} else if (call->fptr_is_patch) {
@@ -623,10 +625,8 @@ mono_print_ins_index_strbuf (int i, MonoInst *ins)
 
 			g_string_append_printf (sbuf, " ");
 			mono_print_ji (ji);
-		} else if (call->fptr) {
-			MonoJitICallInfo *info = mono_find_jit_icall_by_addr (call->fptr);
-			if (info)
-				g_string_append_printf (sbuf, " [%s]", info->name);
+		} else if ((jit_icall_id = call->jit_icall_id)) {
+			g_string_append_printf (sbuf, " [%s]", mono_find_jit_icall_info (jit_icall_id)->name);
 		}
 
 		list = call->out_ireg_args;
@@ -724,7 +724,7 @@ mono_print_ins_index_strbuf (int i, MonoInst *ins)
 	case OP_COND_EXC_INO:
 	case OP_COND_EXC_IC:
 	case OP_COND_EXC_INC:
-		g_string_append_printf (sbuf, " %s", ins->inst_p1);
+		g_string_append_printf (sbuf, " %s", (const char*)ins->inst_p1);
 		break;
 	default:
 		break;
@@ -746,7 +746,7 @@ print_regtrack (RegTrack *t, int num)
 		if (!t [i].born_in)
 			continue;
 		if (i >= MONO_MAX_IREGS) {
-			g_snprintf (buf, sizeof(buf), "R%d", i);
+			g_snprintf (buf, sizeof (buf), "R%d", i);
 			r = buf;
 		} else
 			r = mono_arch_regname (i);
@@ -767,7 +767,7 @@ mono_print_ins (MonoInst *ins)
 	mono_print_ins_index (-1, ins);
 }
 
-static inline void
+static void
 insert_before_ins (MonoBasicBlock *bb, MonoInst *ins, MonoInst* to_insert)
 {
 	/*
@@ -777,7 +777,7 @@ insert_before_ins (MonoBasicBlock *bb, MonoInst *ins, MonoInst* to_insert)
 	mono_bblock_insert_before_ins (bb, ins, to_insert);
 }
 
-static inline void
+static void
 insert_after_ins (MonoBasicBlock *bb, MonoInst *ins, MonoInst **last, MonoInst* to_insert)
 {
 	/*
@@ -789,7 +789,7 @@ insert_after_ins (MonoBasicBlock *bb, MonoInst *ins, MonoInst **last, MonoInst* 
 	*last = to_insert;
 }
 
-static inline int
+static int
 get_vreg_bank (MonoCompile *cfg, int reg, int bank)
 {
 	if (vreg_is_ref (cfg, reg))
@@ -965,7 +965,7 @@ create_copy_ins (MonoCompile *cfg, MonoBasicBlock *bb, MonoInst **last, int dest
 	return copy;
 }
 
-static inline const char*
+static const char*
 regbank_to_string (int bank)
 {
 	if (bank == MONO_REG_INT_REF)
@@ -1013,7 +1013,7 @@ enum {
 	MONO_FP_NEEDS_LOAD			= regmask (2)
 };
 
-static inline int
+static int
 alloc_int_reg (MonoCompile *cfg, MonoBasicBlock *bb, MonoInst **last, MonoInst *ins, regmask_t dest_mask, int sym_reg, RegTrack *info)
 {
 	int val;
@@ -1033,7 +1033,7 @@ alloc_int_reg (MonoCompile *cfg, MonoBasicBlock *bb, MonoInst **last, MonoInst *
 	return val;
 }
 
-static inline int
+static int
 alloc_general_reg (MonoCompile *cfg, MonoBasicBlock *bb, MonoInst **last, MonoInst *ins, regmask_t dest_mask, int sym_reg, int bank)
 {
 	int val;
@@ -1049,7 +1049,7 @@ alloc_general_reg (MonoCompile *cfg, MonoBasicBlock *bb, MonoInst **last, MonoIn
 	return val;
 }
 
-static inline int
+static int
 alloc_reg (MonoCompile *cfg, MonoBasicBlock *bb, MonoInst **last, MonoInst *ins, regmask_t dest_mask, int sym_reg, RegTrack *info, int bank)
 {
 	if (G_UNLIKELY (bank))
@@ -1058,7 +1058,7 @@ alloc_reg (MonoCompile *cfg, MonoBasicBlock *bb, MonoInst **last, MonoInst *ins,
 		return alloc_int_reg (cfg, bb, last, ins, dest_mask, sym_reg, info);
 }
 
-static inline void
+static void
 assign_reg (MonoCompile *cfg, MonoRegState *rs, int reg, int hreg, int bank)
 {
 	if (G_UNLIKELY (bank)) {
@@ -1102,7 +1102,7 @@ assign_reg (MonoCompile *cfg, MonoRegState *rs, int reg, int hreg, int bank)
 	}
 }
 
-static inline regmask_t
+static regmask_t
 get_callee_mask (const char spec)
 {
 	if (G_UNLIKELY (reg_bank (spec)))
@@ -1148,7 +1148,7 @@ mono_local_regalloc (MonoCompile *cfg, MonoBasicBlock *bb)
 		desc_to_fixed_reg_inited = TRUE;
 
 		/* Validate the cpu description against the info in mini-ops.h */
-#if defined(TARGET_AMD64) || defined(TARGET_X86) || defined(TARGET_ARM) || defined(TARGET_ARM64)
+#if defined(TARGET_AMD64) || defined(TARGET_X86) || defined(TARGET_ARM) || defined(TARGET_ARM64) || defined (TARGET_RISCV)
 		for (i = OP_LOAD; i < OP_LAST; ++i) {
 			const char *ispec;
 
@@ -1244,7 +1244,7 @@ mono_local_regalloc (MonoCompile *cfg, MonoBasicBlock *bb)
 		spec = ins_get_spec (ins->opcode);
 		spec_dest = spec [MONO_INST_DEST];
 
-		if (G_UNLIKELY (spec == MONO_ARCH_CPU_SPEC)) {
+		if (G_UNLIKELY (spec == (gpointer)/*FIXME*/MONO_ARCH_CPU_SPEC)) {
 			g_error ("Opcode '%s' missing from machine description file.", mono_inst_name (ins->opcode));
 		}
 		
@@ -2415,6 +2415,7 @@ mono_opcode_to_cond (int opcode)
 	case OP_IBGE_UN:
 	case OP_LBGE_UN:
 	case OP_FBGE_UN:
+	case OP_COND_EXC_GE_UN:
 	case OP_CMOV_IGE_UN:
 	case OP_CMOV_LGE_UN:
 		return CMP_GE_UN;
@@ -2691,6 +2692,8 @@ mono_peephole_ins (MonoBasicBlock *bb, MonoInst *ins)
 int
 mini_exception_id_by_name (const char *name)
 {
+	if (strcmp (name, "NullReferenceException") == 0)
+		return MONO_EXC_NULL_REF;
 	if (strcmp (name, "IndexOutOfRangeException") == 0)
 		return MONO_EXC_INDEX_OUT_OF_RANGE;
 	if (strcmp (name, "OverflowException") == 0)
@@ -2701,12 +2704,12 @@ mini_exception_id_by_name (const char *name)
 		return MONO_EXC_DIVIDE_BY_ZERO;
 	if (strcmp (name, "InvalidCastException") == 0)
 		return MONO_EXC_INVALID_CAST;
-	if (strcmp (name, "NullReferenceException") == 0)
-		return MONO_EXC_NULL_REF;
 	if (strcmp (name, "ArrayTypeMismatchException") == 0)
 		return MONO_EXC_ARRAY_TYPE_MISMATCH;
 	if (strcmp (name, "ArgumentException") == 0)
 		return MONO_EXC_ARGUMENT;
+	if (strcmp (name, "ArgumentOutOfRangeException") == 0)
+		return MONO_EXC_ARGUMENT_OUT_OF_RANGE;
 	g_error ("Unknown intrinsic exception %s\n", name);
 	return -1;
 }
@@ -2720,12 +2723,12 @@ mini_type_is_hfa (MonoType *t, int *out_nfields, int *out_esize)
 	MonoType *ftype, *prev_ftype = NULL;
 	int nfields = 0;
 
-	klass = mono_class_from_mono_type (t);
+	klass = mono_class_from_mono_type_internal (t);
 	iter = NULL;
 	while ((field = mono_class_get_fields_internal (klass, &iter))) {
 		if (field->type->attrs & FIELD_ATTRIBUTE_STATIC)
 			continue;
-		ftype = mono_field_get_type (field);
+		ftype = mono_field_get_type_internal (field);
 		ftype = mini_native_type_replace_type (ftype);
 
 		if (MONO_TYPE_ISSTRUCT (ftype)) {

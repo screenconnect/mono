@@ -13,6 +13,8 @@ using System.Threading.Tasks;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net.Sockets;
+using System.Collections.Concurrent;
+using System.Collections;
 #if !MOBILE
 using MonoTests.Helpers;
 #endif
@@ -172,6 +174,95 @@ public struct AStruct : ITest2 {
 	}
 }
 
+public struct int4
+{
+	public int w, x, y, z;
+
+	public int4(int w, int x, int y, int z)
+	{
+		this.w = w;
+		this.x = x;
+		this.y = y;
+		this.z = z;
+	}
+}
+
+
+public struct char4
+{
+	public int w, x, y, z;
+
+	public char4(char w, char x, char y, char z)
+	{
+		this.w = w;
+		this.x = x;
+		this.y = y;
+		this.z = z;
+	}
+}
+
+public unsafe struct NodeTestFixedArray
+{
+	private fixed short buffer[4];
+	private fixed char buffer2[4];
+
+	public int4 Buffer
+	{
+		set
+		{
+			fixed (NodeTestFixedArray* p = &this) {
+				p->buffer[0] = (short)value.w;
+				p->buffer[1] = (short)value.x;
+				p->buffer[2] = (short)value.y;
+				p->buffer[3] = (short)value.z;
+			}
+		}
+	}
+	public char4 Buffer2
+	{
+		set
+		{
+			fixed (NodeTestFixedArray* p = &this) {
+				p->buffer2[0] = (char)value.w;
+				p->buffer2[1] = (char)value.x;
+				p->buffer2[2] = (char)value.y;
+				p->buffer2[3] = (char)value.z;
+			}
+		}
+	}
+	public String getBuffer0() {
+		fixed (NodeTestFixedArray* p = &this) 
+			return Convert.ToString(p->buffer[0]);
+	}
+	public String getBuffer1() {
+		fixed (NodeTestFixedArray* p = &this) 
+			return Convert.ToString(p->buffer[1]);
+	}
+	public String getBuffer2() {
+		fixed (NodeTestFixedArray* p = &this) 
+			return Convert.ToString(p->buffer[2]);
+	}
+	public String getBuffer3() {
+		fixed (NodeTestFixedArray* p = &this) 
+			return Convert.ToString(p->buffer[3]);
+	}
+	public String getBuffer2_0() {
+		fixed (NodeTestFixedArray* p = &this) 
+			return Char.ToString(p->buffer2[0]);
+	}
+	public String getBuffer2_1() {
+		fixed (NodeTestFixedArray* p = &this) 
+			return Char.ToString(p->buffer2[1]);
+	}
+	public String getBuffer2_2() {
+		fixed (NodeTestFixedArray* p = &this) 
+			return Char.ToString(p->buffer2[2]);
+	}
+	public String getBuffer2_3() {
+		fixed (NodeTestFixedArray* p = &this) 
+			return Char.ToString(p->buffer2[3]);
+	}
+}
 
 public struct BlittableStruct {
 	public int i;
@@ -188,6 +279,19 @@ public class GClass<T> {
 
 	[MethodImplAttribute (MethodImplOptions.NoInlining)]
 	public void bp<T2> () {
+	}
+}
+
+public struct MySpan<T> {
+	internal class Pinnable<J> {
+		public J Data;
+	}
+	Pinnable<T> _pinnable;
+	public MySpan(T[] array) {
+		_pinnable = Unsafe.As<Pinnable<T>>(array);
+	}
+	public override string ToString() {
+		return "abc";
 	}
 }
 
@@ -243,6 +347,76 @@ class TestIfaces : ITest
 
 	TestIfaces<int> Baz () {
 		return null;
+	}
+}
+
+public class RuntimeInvokeWithThrowClass
+{
+    public RuntimeInvokeWithThrowClass()
+    {
+    }
+    public void RuntimeInvokeThrowMethod()
+    {
+        throw new Exception("thays");
+    }
+}
+
+public sealed class DebuggerTaskScheduler : TaskScheduler, IDisposable
+{
+	private readonly BlockingCollection<Task> _tasks = new BlockingCollection<Task>();
+	private readonly List<Thread> _threads;
+	private readonly Thread mainThread = null;
+	public DebuggerTaskScheduler(int countThreads)
+	{
+		_threads = Enumerable.Range(0, countThreads).Select(i =>
+		{
+			Thread t = new Thread(() =>
+			{
+				foreach (var task in _tasks.GetConsumingEnumerable())
+				{
+					TryExecuteTask(task);
+				}
+			});
+			//the new task will be executed by a foreground thread ensuring that it will be executed ultil the end.
+			t.IsBackground = false;
+			t.Start();
+			return t;
+
+		}).ToList();
+	}
+
+	/// <inheritdoc />
+	protected override void QueueTask(Task task)
+	{
+		_tasks.Add(task);
+	}
+
+	/// <inheritdoc />
+	public override int MaximumConcurrencyLevel
+	{
+		get
+		{
+			return _threads.Count;
+		}
+	}
+
+	/// <inheritdoc />
+	public void Dispose()
+	{	
+		// Indicate that no new tasks will be coming in
+		_tasks.CompleteAdding();
+	}
+
+	/// <inheritdoc />
+	protected override bool TryExecuteTaskInline(Task task, bool taskWasPreviouslyQueued)
+	{
+		return false;
+	}
+
+	/// <inheritdoc />
+	protected override IEnumerable<Task> GetScheduledTasks()
+	{
+		return _tasks;
 	}
 }
 
@@ -340,8 +514,20 @@ public class Tests : TestsBase, ITest2
 			unhandled_exception ();
 			return 0;
 		}
+		if (args.Length >0 && args [0] == "unhandled-exception-wrapper") {
+			unhandled_exception_wrapper ();
+			return 0;
+		}
+		if (args.Length >0 && args [0] == "unhandled-exception-perform-wait-callback") {
+			unhandled_exception_perform_wait_callback ();
+			return 0;
+		}
 		if (args.Length >0 && args [0] == "unhandled-exception-endinvoke") {
 			unhandled_exception_endinvoke ();
+			return 0;
+		}
+		if (args.Length >0 && args [0] == "crash-vm") {
+			crash ();
 			return 0;
 		}
 		if (args.Length >0 && args [0] == "unhandled-exception-user") {
@@ -365,9 +551,15 @@ public class Tests : TestsBase, ITest2
 			return 0;
 		}
 		if (args.Length > 0 && args [0] == "step-out-void-async") {
-			var wait = new ManualResetEvent (false);
-			step_out_void_async (wait);
-			wait.WaitOne ();//Don't exist until step_out_void_async is executed...
+			run_step_out_void_async();
+			return 0;
+		}
+		if (args.Length > 0 && args [0] == "runtime_invoke_hybrid_exceptions") {
+			runtime_invoke_hybrid_exceptions();
+			return 0;
+		}
+		if (args.Length > 0 && args [0] == "new_thread_hybrid_exception") {
+			new_thread_hybrid_exception();
 			return 0;
 		}
 		assembly_load ();
@@ -394,6 +586,7 @@ public class Tests : TestsBase, ITest2
 		set_ip ();
 		step_filters ();
 		pointers ();
+		ref_return ();
 		if (args.Length > 0 && args [0] == "local-reflect")
 			local_reflect ();
 		if (args.Length > 0 && args [0] == "domain-test")
@@ -409,10 +602,36 @@ public class Tests : TestsBase, ITest2
 			new Tests ().invoke_abort ();
 		new Tests ().evaluate_method ();
 		Bug59649 ();
+		elapsed_time();
+		field_with_unsafe_cast_value();
 		inspect_enumerator_in_generic_struct();
+		if_property_stepping();
+		fixed_size_array();
+		test_new_exception_filter();
+		test_async_debug_generics();
 		return 3;
 	}
 
+	private class TestClass {
+		private string oneLineProperty = "";
+		public string OneLineProperty {
+			get { return oneLineProperty; }
+			set { oneLineProperty = value; }
+		}
+	}
+
+	public class MyException : Exception {
+		public MyException(string message) : base(message) {
+		}
+	}
+
+	public static void if_property_stepping() {
+		var test = new TestClass();
+		if (test.OneLineProperty == "someInvalidValue6049e709-7271-41a1-bc0a-f1f1b80d4125")
+			return;
+		Console.Write("");
+	}
+	
 	public static void local_reflect () {
 		//Breakpoint line below, and reflect someField via ObjectMirror;
 		LocalReflectClass.RunMe ();
@@ -491,6 +710,8 @@ public class Tests : TestsBase, ITest2
 		ss_fp_clobber ();
 		ss_no_frames ();
 		ss_await ();
+		ss_nested_with_three_args_wrapper();
+		ss_nested_twice_with_two_args_wrapper();
 	}
 
 	[MethodImplAttribute (MethodImplOptions.NoInlining)]
@@ -591,6 +812,15 @@ public class Tests : TestsBase, ITest2
 	}
 
 	[MethodImplAttribute (MethodImplOptions.NoInlining)]
+	public static void field_with_unsafe_cast_value() {
+		var arr = new char[3];
+		arr[0] = 'a';
+		arr[1] = 'b';
+		arr[2] = 'c';
+		MySpan<char> bytes = new MySpan<char>(arr);
+	}
+
+	[MethodImplAttribute (MethodImplOptions.NoInlining)]
 	public static void ss_nested () {
 		ss_nested_1 (ss_nested_2 ());
 		ss_nested_1 (ss_nested_2 ());
@@ -600,6 +830,93 @@ public class Tests : TestsBase, ITest2
 	[MethodImplAttribute (MethodImplOptions.NoInlining)]
 	public static void ss_nested_with_two_args_wrapper () {
 		ss_nested_with_two_args(ss_nested_arg (), ss_nested_arg ());
+	}
+
+	[MethodImplAttribute (MethodImplOptions.NoInlining)]
+	public static void ss_nested_with_three_args_wrapper () {
+		ss_nested_with_three_args(ss_nested_arg1 (), ss_nested_arg2 (), ss_nested_arg3 ());
+	}
+
+	[MethodImplAttribute (MethodImplOptions.NoInlining)]
+	public static void ss_nested_twice_with_two_args_wrapper () {
+		ss_nested_with_two_args(ss_nested_arg1 (), ss_nested_with_two_args(ss_nested_arg2 (), ss_nested_arg3 ()));
+	}
+  
+	[MethodImplAttribute (MethodImplOptions.NoInlining)]
+	public static void elapsed_time () {
+		Thread.Sleep(200);
+		Thread.Sleep(00);
+		Thread.Sleep(100);
+		Thread.Sleep(300);
+	}
+	
+	[MethodImplAttribute (MethodImplOptions.NoInlining)]
+	public static void fixed_size_array () {
+		var n = new NodeTestFixedArray();
+		n.Buffer = new int4(1, 2, 3, 4);
+		n.Buffer2 = new char4('a', 'b', 'c', 'd');
+	}
+
+	[MethodImplAttribute (MethodImplOptions.NoInlining)]
+	public static void test_new_exception_filter () {
+		test_new_exception_filter1();
+		test_new_exception_filter2();
+		test_new_exception_filter3();
+		test_new_exception_filter4();
+	}
+
+
+	public static void test_new_exception_filter1 () {
+		try {
+			throw new Exception("excp");
+		}
+		catch (Exception e) {
+		}
+	}
+
+	public static void test_new_exception_filter2 () {
+		try {
+			throw new MyException("excp");
+		}
+		catch (Exception e) {
+		}
+	}
+
+	public static void test_new_exception_filter3 () {
+		try {
+			throw new ArgumentException();
+		}
+		catch (Exception e) {
+		}
+		try {
+			throw new Exception("excp");
+		}
+		catch (Exception e) {
+		}
+	}
+
+	public static void test_new_exception_filter4 () {
+		try {
+			throw new ArgumentException();
+		}
+		catch (Exception e) {
+		}
+		try {
+			throw new Exception("excp");
+		}
+		catch (Exception e) {
+		}
+	}
+
+	[MethodImplAttribute (MethodImplOptions.NoInlining)]
+	public static void test_async_debug_generics () {
+		ExecuteAsync_Broken<object>().Wait ();
+	}
+
+	async static Task<T> ExecuteAsync_Broken<T>()
+	{
+		await Task.Delay(2);
+		return default;
 	}
 
 	[MethodImplAttribute (MethodImplOptions.NoInlining)]
@@ -613,7 +930,27 @@ public class Tests : TestsBase, ITest2
 	}
 
 	[MethodImplAttribute (MethodImplOptions.NoInlining)]
+	public static int ss_nested_with_three_args (int a1, int a2, int a3) {
+		return a1 + a2 + a3;
+	}
+
+	[MethodImplAttribute (MethodImplOptions.NoInlining)]
 	public static int ss_nested_arg () {
+		return 0;
+	}
+
+	[MethodImplAttribute (MethodImplOptions.NoInlining)]
+	public static int ss_nested_arg1 () {
+		return 0;
+	}
+
+	[MethodImplAttribute (MethodImplOptions.NoInlining)]
+	public static int ss_nested_arg2 () {
+		return 0;
+	}
+	
+	[MethodImplAttribute (MethodImplOptions.NoInlining)]
+	public static int ss_nested_arg3 () {
 		return 0;
 	}
 
@@ -1340,7 +1677,29 @@ public class Tests : TestsBase, ITest2
 	}
 
 	[MethodImplAttribute (MethodImplOptions.NoInlining)]
+	public static void unhandled_exception_wrapper () {
+		 throw new ArgumentException("test");
+	}
+	[MethodImplAttribute (MethodImplOptions.NoInlining)]
 	public static void unhandled_exception_endinvoke_2 () {
+	}
+
+	[MethodImplAttribute (MethodImplOptions.NoInlining)]
+	public static void unhandled_exception_perform_wait_callback () {
+		try
+		{
+			var results = ResolveAsync().GetAwaiter().GetResult();
+		}
+		catch (SocketException sockEx)
+		{
+			//Console.WriteLine("correctly handled");
+		}
+	}
+
+	public static async Task<List<string>> ResolveAsync()
+	{
+		var addresses = await System.Net.Dns.GetHostAddressesAsync("foo.bar.baz");
+		return new List<string>(addresses.Select(addr => addr.ToString()));
 	}
 
 	[MethodImplAttribute (MethodImplOptions.NoInlining)]
@@ -1358,6 +1717,11 @@ public class Tests : TestsBase, ITest2
 			}, null);
 		Thread.Sleep (1000);
 		unhandled_exception_endinvoke_2 ();
+	}
+
+	[MethodImplAttribute (MethodImplOptions.NoInlining)]
+	public static void crash () {
+		unsafe { Console.WriteLine("{0}", *(int*) -1); }
 	}
 
 	[MethodImplAttribute (MethodImplOptions.NoInlining)]
@@ -1803,6 +2167,15 @@ public class Tests : TestsBase, ITest2
 	{
 		UninitializedClass.Call();//Breakpoint here and step in
 	}
+	
+	public static void run_step_out_void_async()
+	{
+		DebuggerTaskScheduler dts = new DebuggerTaskScheduler(2);
+		var wait =  new ManualResetEvent (false);
+		step_out_void_async (wait);
+		wait.WaitOne ();//Don't exist until step_out_void_async is executed...
+		dts.Dispose();
+	}
 
 	[MethodImplAttribute (MethodImplOptions.NoInlining)]
 	static async void step_out_void_async (ManualResetEvent wait)
@@ -1827,6 +2200,52 @@ public class Tests : TestsBase, ITest2
 		BlittableStruct s = new BlittableStruct () { i = 2, d = 3.0 };
 		fixed (int* pa = a)
 			pointer_arguments (pa, &s);
+	}
+
+	[MethodImplAttribute (MethodImplOptions.NoInlining)]
+	public static void ref_return () {
+
+	}
+
+	static int ret_val = 1;
+	public static ref int get_ref_int() {
+		return ref ret_val;
+	}
+
+	static string ref_return_string = "byref";
+	public static ref string get_ref_string() {
+		return ref ref_return_string;
+	}
+
+
+	static BlittableStruct ref_return_struct = new BlittableStruct () { i = 1, d = 2.0 };
+	public static ref BlittableStruct get_ref_struct() {
+		return ref ref_return_struct;
+	}
+
+	[MethodImplAttribute (MethodImplOptions.NoInlining)]
+	public static void runtime_invoke_hybrid_exceptions () {
+		Type rtType = Type.GetType("RuntimeInvokeWithThrowClass");
+		ConstructorInfo rtConstructor = rtType.GetConstructor(Type.EmptyTypes);
+		object rtObject = rtConstructor.Invoke(new object[] { });
+		MethodInfo rtMethod = rtType.GetMethod("RuntimeInvokeThrowMethod");
+		rtMethod.Invoke(rtObject, new object[] { });
+	}
+	
+	[MethodImplAttribute (MethodImplOptions.NoInlining)]
+	public static void new_thread_hybrid_exception() {
+		try
+           {
+               Thread thread = new Thread(new_thread_hybrid_exception2);
+               thread.Start();
+           }
+           catch (Exception sockEx)
+           {
+           }
+	}
+	public static void new_thread_hybrid_exception2()
+	{
+		throw new Exception("Error");
 	}
 }
 

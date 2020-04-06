@@ -77,6 +77,7 @@
 #include <mono/utils/mono-os-mutex.h>
 #include <mono/utils/mono-logger-internals.h>
 #include <mono/utils/mono-counters.h>
+#include <mono/utils/mono-publib.h>
 
 // Statistics for profiler events.
 static gint32 coverage_methods_ctr,
@@ -277,7 +278,7 @@ dump_method (gpointer key, gpointer value, gpointer userdata)
 	image = mono_class_get_image (klass);
 	image_name = mono_image_get_name (image);
 
-	method_signature = mono_signature_get_desc (mono_method_signature (method), TRUE);
+	method_signature = mono_signature_get_desc (mono_method_signature_internal (method), TRUE);
 	class_name = parse_generic_type_names (mono_type_get_name (m_class_get_byval_arg (klass)));
 	method_name = mono_method_get_name (method);
 
@@ -689,6 +690,9 @@ static gboolean
 coverage_filter (MonoProfiler *prof, MonoMethod *method)
 {
 	guint32 iflags, flags;
+
+	if (method->wrapper_type)
+		return FALSE;
 
 	flags = mono_method_get_flags (method, &iflags);
 

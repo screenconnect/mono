@@ -540,7 +540,8 @@ DEFAULT_MMAP_THRESHOLD       default: 256K
 #endif  /* linux || __NetBSD__ */
 #endif  /* HAVE_MREMAP */
 #ifndef MALLOC_FAILURE_ACTION
-#define MALLOC_FAILURE_ACTION  errno = ENOMEM;
+#include <mono/utils/mono-errno.h>
+#define MALLOC_FAILURE_ACTION mono_set_errno (ENOMEM);
 #endif  /* MALLOC_FAILURE_ACTION */
 #ifndef HAVE_MORECORE
 #if ONLY_MSPACES
@@ -1189,7 +1190,7 @@ int mspace_mallopt(int, int);
 #include <string.h>      /* for memset etc */
 #endif  /* LACKS_STRING_H */
 #if USE_BUILTIN_FFS
-#ifndef LACKS_STRINGS_H
+#if !defined(LACKS_STRINGS_H) && defined(HAVE_STRINGS_H)
 #include <strings.h>     /* for ffs */
 #endif /* LACKS_STRINGS_H */
 #endif /* USE_BUILTIN_FFS */
@@ -1354,7 +1355,7 @@ static void* win32direct_mmap(size_t size) {
 /* This function supports releasing coalesed segments */
 static int win32munmap(void* ptr, size_t size) {
   MEMORY_BASIC_INFORMATION minfo;
-  char* cptr = ptr;
+  char* cptr = (char*)ptr;
   while (size) {
     if (VirtualQuery(cptr, &minfo, sizeof(minfo)) == 0)
       return -1;

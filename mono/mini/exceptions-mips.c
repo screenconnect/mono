@@ -30,6 +30,7 @@
 #include "mini-mips.h"
 #include "mini-runtime.h"
 #include "aot-runtime.h"
+#include "mono/utils/mono-tls-inline.h"
 
 #define GENERIC_EXCEPTION_SIZE 256
 
@@ -177,7 +178,7 @@ mono_arch_get_call_filter (MonoTrampInfo **info, gboolean aot)
 }
 
 static void
-throw_exception (MonoObject *exc, unsigned long eip, unsigned long esp, gboolean rethrow)
+throw_exception (MonoObject *exc, unsigned long eip, unsigned long esp, gboolean rethrow, gboolean preserve_ips)
 {
 	ERROR_DECL (error);
 	MonoContext ctx;
@@ -200,9 +201,11 @@ throw_exception (MonoObject *exc, unsigned long eip, unsigned long esp, gboolean
 
 	if (mono_object_isinst_checked (exc, mono_defaults.exception_class, error)) {
 		MonoException *mono_ex = (MonoException*)exc;
-		if (!rethrow) {
+		if (!rethrow && !mono_ex->caught_in_unmanaged) {
 			mono_ex->stack_trace = NULL;
 			mono_ex->trace_ips = NULL;
+		} if (preserve_ips) {
+			mono_ex->caught_in_unmanaged = TRUE;
 		}
 	}
 	mono_error_assert_ok (error);
@@ -227,7 +230,7 @@ throw_exception (MonoObject *exc, unsigned long eip, unsigned long esp, gboolean
  *
  */
 static gpointer 
-mono_arch_get_throw_exception_generic (guint8 *start, int size, int corlib, gboolean rethrow)
+mono_arch_get_throw_exception_generic (guint8 *start, int size, int corlib, gboolean rethrow, gboolean preserve_ips)
 {
 	guint8 *code;
 	int alloc_size, pos, i;
@@ -312,7 +315,31 @@ mono_arch_get_rethrow_exception (MonoTrampInfo **info, gboolean aot)
 
 	if (inited)
 		return start;
-	mono_arch_get_throw_exception_generic (start, sizeof (start), FALSE, TRUE);
+	mono_arch_get_throw_exception_generic (start, sizeof (start), FALSE, TRUE, FALSE);
+	inited = 1;
+	return start;
+}
+
+/**
+ * mono_arch_get_rethrow_preserve_exception:
+ * \returns a function pointer which can be used to rethrow
+ * exceptions while avoiding modification of saved trace_ips.
+ * The returned function has the following 
+ * signature: void (*func) (MonoException *exc); 
+ */
+gpointer
+mono_arch_get_rethrow_preserve_exception (MonoTrampInfo **info, gboolean aot)
+{
+	static guint8 start [GENERIC_EXCEPTION_SIZE];
+	static int inited = 0;
+
+	g_assert (!aot);
+	if (info)
+		*info = NULL;
+
+	if (inited)
+		return start;
+	mono_arch_get_throw_exception_generic (start, sizeof (start), FALSE, TRUE, TRUE);
 	inited = 1;
 	return start;
 }
@@ -341,7 +368,7 @@ mono_arch_get_throw_exception (MonoTrampInfo **info, gboolean aot)
 
 	if (inited)
 		return start;
-	mono_arch_get_throw_exception_generic (start, sizeof (start), FALSE, FALSE);
+	mono_arch_get_throw_exception_generic (start, sizeof (start), FALSE, FALSE, FALSE);
 	inited = 1;
 	return start;
 }
@@ -379,7 +406,7 @@ mono_arch_get_throw_corlib_exception (MonoTrampInfo **info, gboolean aot)
 
 	if (inited)
 		return start;
-	mono_arch_get_throw_exception_generic (start, sizeof (start), TRUE, FALSE);
+	mono_arch_get_throw_exception_generic (start, sizeof (start), TRUE, FALSE, FALSE);
 	inited = 1;
 	return start;
 }
@@ -396,7 +423,7 @@ gboolean
 mono_arch_unwind_frame (MonoDomain *domain, MonoJitTlsData *jit_tls, 
 							 MonoJitInfo *ji, MonoContext *ctx, 
 							 MonoContext *new_ctx, MonoLMF **lmf, 
-							 mgreg_t **save_locations,
+							 host_mgreg_t **save_locations,
 							 StackFrameInfo *frame)
 {
 	memset (frame, 0, sizeof (StackFrameInfo));
@@ -407,7 +434,7 @@ mono_arch_unwind_frame (MonoDomain *domain, MonoJitTlsData *jit_tls,
 	if (ji != NULL) {
 		int i;
 		gpointer ip = MONO_CONTEXT_GET_IP (ctx);
-		mgreg_t regs [MONO_MAX_IREGS + 1];
+		host_mgreg_t regs [MONO_MAX_IREGS + 1];
 		guint8 *cfa;
 		guint32 unwind_info_len;
 		guint8 *unwind_info;
@@ -433,7 +460,7 @@ mono_arch_unwind_frame (MonoDomain *domain, MonoJitTlsData *jit_tls,
 		for (i = 0; i < MONO_MAX_IREGS; ++i)
 			new_ctx->sc_regs [i] = regs [i];
 		new_ctx->sc_pc = regs [mips_ra];
-		new_ctx->sc_regs [mips_sp] = (mgreg_t)cfa;
+		new_ctx->sc_regs [mips_sp] = (host_mgreg_t)(gsize)cfa;
 
 		/* we substract 8, so that the IP points into the call instruction */
 		MONO_CONTEXT_SET_IP (new_ctx, new_ctx->sc_pc - 8);

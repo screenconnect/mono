@@ -122,7 +122,7 @@ remove_bb_from_phis (MonoCompile *cfg, MonoBasicBlock *bb, MonoBasicBlock *targe
 	}
 }
 
-static inline int
+static int
 op_phi_to_move (int opcode)
 {
 	switch (opcode) {
@@ -141,7 +141,7 @@ op_phi_to_move (int opcode)
 	return -1;
 }
 
-static inline void
+static void
 record_use (MonoCompile *cfg, MonoInst *var, MonoBasicBlock *bb, MonoInst *ins)
 {
 	MonoMethodVar *info;
@@ -465,7 +465,7 @@ mono_ssa_compute (MonoCompile *cfg)
 
 	/* Renaming phase */
 
-	stack = (MonoInst **)alloca (sizeof (MonoInst *) * cfg->num_varinfo);
+	stack = g_newa (MonoInst*, cfg->num_varinfo);
 	memset (stack, 0, sizeof (MonoInst *) * cfg->num_varinfo);
 
 	lvreg_stack = g_new0 (guint32, cfg->next_vreg);
@@ -826,6 +826,10 @@ evaluate_ins (MonoCompile *cfg, MonoInst *ins, MonoInst **res, MonoInst **carray
 		return 2;
 
 	num_sregs = mono_inst_get_src_registers (ins, sregs);
+
+	if (num_sregs > 2)
+		return 2;
+
 	for (i = 0; i < MONO_MAX_SRC_REGS; ++i)
 		args [i] = NULL;
 	for (i = 0; i < num_sregs; ++i) {
@@ -873,7 +877,7 @@ evaluate_ins (MonoCompile *cfg, MonoInst *ins, MonoInst **res, MonoInst **carray
 	return 0;
 }
 
-static inline void
+static void
 change_varstate (MonoCompile *cfg, GList **cvars, MonoMethodVar *info, int state, MonoInst *c0, MonoInst **carray)
 {
 	if (info->cpstate >= state)
@@ -894,7 +898,7 @@ change_varstate (MonoCompile *cfg, GList **cvars, MonoMethodVar *info, int state
 	}
 }
 
-static inline void
+static void
 add_cprop_bb (MonoCompile *cfg, MonoBasicBlock *bb, GList **bblist)
 {
 	if (G_UNLIKELY (cfg->verbose_level > 1))
@@ -1116,7 +1120,7 @@ fold_ins (MonoCompile *cfg, MonoBasicBlock *bb, MonoInst *ins, MonoInst **carray
 				ins->sreg2 = -1;
 
 				if ((opcode2 == OP_VOIDCALL) || (opcode2 == OP_CALL) || (opcode2 == OP_LCALL) || (opcode2 == OP_FCALL))
-					((MonoCallInst*)ins)->fptr = (gpointer)ins->inst_imm;
+					((MonoCallInst*)ins)->fptr = (gpointer)(uintptr_t)ins->inst_imm;
 			}
 		} else {
 			/* FIXME: Handle 3 op insns */
@@ -1304,7 +1308,7 @@ mono_ssa_cprop (MonoCompile *cfg)
 	}
 }
 
-static inline void
+static void
 add_to_dce_worklist (MonoCompile *cfg, MonoMethodVar *var, MonoMethodVar *use, GList **wl)
 {
 	GList *tmp;
@@ -1500,6 +1504,14 @@ mono_ssa_loop_invariant_code_motion (MonoCompile *cfg)
 						continue;
 					ins->sreg1 = sreg;
 				}
+
+				/* if any successor block of the immediate post dominator is an
+				 * exception handler, it's not safe to do the code motion */
+				skip = FALSE;
+				for (int j = 0; j < idom->out_count && !skip; j++)
+					skip |= !!(idom->out_bb [j]->flags & BB_EXCEPTION_HANDLER);
+				if (skip)
+					continue;
 
 				if (cfg->verbose_level > 1) {
 					printf ("licm in BB%d on ", bb->block_num);

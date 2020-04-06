@@ -9,8 +9,6 @@
     <ClCompile Include="$(MonoSourceLocation)\mono\utils\mono-logger.c" />
     <ClInclude Include="$(MonoSourceLocation)\mono\utils\mono-logger-internals.h" />
     <ClCompile Include="$(MonoSourceLocation)\mono\utils\mono-codeman.c" />
-    <ClCompile Include="$(MonoSourceLocation)\mono\utils\dlmalloc.c" />
-    <ClInclude Include="$(MonoSourceLocation)\mono\utils\dlmalloc.h" />
     <ClCompile Include="$(MonoSourceLocation)\mono\utils\mono-counters.c" />
     <ClInclude Include="$(MonoSourceLocation)\mono\utils\mono-compiler.h" />
     <ClInclude Include="$(MonoSourceLocation)\mono\utils\mono-complex.h" />
@@ -44,7 +42,7 @@
     <ClInclude Include="$(MonoSourceLocation)\mono\utils\mono-io-portability.h" />
     <ClCompile Include="$(MonoSourceLocation)\mono\utils\monobitset.c" />
     <ClCompile Include="$(MonoSourceLocation)\mono\utils\mono-filemap.c" />
-    <ClCompile Include="$(MonoSourceLocation)\mono\utils\mono-math.c" />
+    <ClCompile Include="$(MonoSourceLocation)\mono\utils\mono-math-c.c" />
     <ClCompile Include="$(MonoSourceLocation)\mono\utils\mono-mmap.c" />
     <ClCompile Include="$(MonoSourceLocation)\mono\utils\mono-mmap-windows.c" />
     <ClInclude Include="$(MonoSourceLocation)\mono\utils\mono-mmap.h" />
@@ -68,6 +66,7 @@
     <ClInclude Include="$(MonoSourceLocation)\mono\utils\mono-string.h" />
     <ClCompile Include="$(MonoSourceLocation)\mono\utils\mono-time.c" />
     <ClInclude Include="$(MonoSourceLocation)\mono\utils\mono-time.h" />
+    <ClInclude Include="$(MonoSourceLocation)\mono\utils\strenc-internals.h" />
     <ClInclude Include="$(MonoSourceLocation)\mono\utils\strenc.h" />
     <ClCompile Include="$(MonoSourceLocation)\mono\utils\strenc.c" />
     <ClCompile Include="$(MonoSourceLocation)\mono\utils\mono-uri.c" />
@@ -175,6 +174,7 @@
     <ClInclude Include="$(MonoSourceLocation)\mono\utils\bsearch.h" />
     <ClCompile Include="$(MonoSourceLocation)\mono\utils\bsearch.c" />
     <ClInclude Include="$(MonoSourceLocation)\mono\utils\mono-signal-handler.h" />
+    <ClCompile Include="$(MonoSourceLocation)\mono\utils\mono-signal-handler.c" />
     <ClInclude Include="$(MonoSourceLocation)\mono\utils\mono-conc-hashtable.h" />
     <ClCompile Include="$(MonoSourceLocation)\mono\utils\mono-conc-hashtable.c" />
     <ClInclude Include="$(MonoSourceLocation)\mono\utils\json.h" />
@@ -198,6 +198,8 @@
     <ClInclude Include="$(MonoSourceLocation)\mono\utils\refcount.h" />
     <ClInclude Include="$(MonoSourceLocation)\mono\utils\w32api.h" />
     <ClInclude Include="$(MonoSourceLocation)\mono\utils\unlocked.h" />
+    <ClCompile Include="$(MonoSourceLocation)\mono\utils\mono-state.c" />
+    <ClInclude Include="$(MonoSourceLocation)\mono\utils\mono-state.h" />
   </ItemGroup>
   <ItemGroup Label="libmonoutilsinclude_headers">
     <ClInclude Include="$(MonoSourceLocation)\mono\utils\mono-logger.h" />

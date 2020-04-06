@@ -1,37 +1,41 @@
 using System;
 using System.Reflection;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace System.Net.Http {
 	public partial class HttpClient {
 
-		public HttpClient ()
-			: this (GetDefaultHandler (), true)
+		static HttpMessageHandler CreateDefaultHandler ()
 		{
-		}
+			string envvar = Environment.GetEnvironmentVariable ("XA_HTTP_CLIENT_HANDLER_TYPE")?.Trim ();
 
-		static HttpMessageHandler GetDefaultHandler ()
-		{
-			Type type = Type.GetType("Android.Runtime.AndroidEnvironment, Mono.Android");
-			if (type == null)
-				return GetFallback ("Invalid Mono.Android assembly? Cannot find Android.Runtime.AndroidEnvironment");
+			if (string.IsNullOrEmpty (envvar))
+				return new HttpClientHandler ();
 
-			MethodInfo method = type.GetMethod ("GetHttpMessageHandler", BindingFlags.Static | BindingFlags.NonPublic);
-			if (method == null)
-				return GetFallback ("Your Xamarin.Android version does not support obtaining of the custom HttpClientHandler");
+			if (envvar?.StartsWith ("System.Net.Http.MonoWebRequestHandler", StringComparison.InvariantCulture) == true)
+			{
+				Type monoWrhType = Type.GetType (envvar, false);
+				if (monoWrhType != null)
+					return new HttpClientHandler ((IMonoHttpClientHandler) Activator.CreateInstance (monoWrhType));
 
-			object ret = method.Invoke (null, null);
-			if (ret == null)
-				return GetFallback ("Xamarin.Android returned no custom HttpClientHandler");
+				return new HttpClientHandler ();
+			}
 
-			var handler = ret as HttpMessageHandler;
-			if (handler == null)
-				return GetFallback ($"{ret?.GetType()} is not a valid HttpMessageHandler");
-			return handler;
-		}
+			Type handlerType = Type.GetType (envvar, false);
+			if (handlerType == null && !envvar.Contains (", "))
+			{
+				// if assembly was not specified - look for it in Mono.Android too 
+				// (e.g. AndroidHttpHandler is there)
+				handlerType = Type.GetType (envvar + ", Mono.Android", false);
+			}
 
-		static HttpMessageHandler GetFallback (string message)
-		{
-			Console.WriteLine (message + ". Defaulting to System.Net.Http.HttpClientHandler");
+			if (handlerType == null)
+				return new HttpClientHandler ();
+
+			if (Activator.CreateInstance (handlerType) is HttpMessageHandler msgHandler)
+				return msgHandler;
+
 			return new HttpClientHandler ();
 		}
 	}

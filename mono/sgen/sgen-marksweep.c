@@ -446,7 +446,7 @@ sweep_in_progress (void)
 		state == SWEEP_STATE_COMPACTING;
 }
 
-static inline gboolean
+static gboolean
 block_is_swept_or_marking (MSBlockInfo *block)
 {
 	gint32 state = block->state;
@@ -1059,8 +1059,8 @@ static void
 major_dump_heap (FILE *heap_dump_file)
 {
 	MSBlockInfo *block;
-	int *slots_available = (int *)alloca (sizeof (int) * num_block_obj_sizes);
-	int *slots_used = (int *)alloca (sizeof (int) * num_block_obj_sizes);
+	int *slots_available = g_newa (int, num_block_obj_sizes);
+	int *slots_used = g_newa (int, num_block_obj_sizes);
 	int i;
 
 	for (i = 0; i < num_block_obj_sizes; ++i)
@@ -1126,7 +1126,7 @@ get_cardtable_mod_union_for_block (MSBlockInfo *block, gboolean allocate)
 	return other;
 }
 
-static inline guint8*
+static guint8*
 major_get_cardtable_mod_union_for_reference (char *ptr)
 {
 	MSBlockInfo *block = MS_BLOCK_FOR_OBJ (ptr);
@@ -1153,7 +1153,7 @@ mark_mod_union_card (GCObject *obj, void **ptr, GCObject *value_obj)
 	sgen_binary_protocol_mod_union_remset (obj, ptr, value_obj, SGEN_LOAD_VTABLE (value_obj));
 }
 
-static inline gboolean
+static gboolean
 major_block_is_evacuating (MSBlockInfo *block)
 {
 	if (evacuate_block_obj_sizes [block->obj_size_index] &&
@@ -1308,7 +1308,7 @@ static guint64 stat_drain_loops;
 #define DRAIN_GRAY_STACK_FUNCTION_NAME	drain_gray_stack_concurrent_par_with_evacuation
 #include "sgen-marksweep-drain-gray-stack.h"
 
-static inline gboolean
+static gboolean
 major_is_evacuating (void)
 {
 	int i;
@@ -1422,7 +1422,7 @@ mark_pinned_objects_in_block (MSBlockInfo *block, size_t first_entry, size_t las
 		block->has_pinned = TRUE;
 }
 
-static inline void
+static void
 sweep_block_for_size (MSBlockInfo *block, int count, int obj_size)
 {
 	int obj_index;
@@ -1452,7 +1452,7 @@ sweep_block_for_size (MSBlockInfo *block, int count, int obj_size)
 	}
 }
 
-static inline gboolean
+static gboolean
 try_set_block_state (MSBlockInfo *block, gint32 new_state, gint32 expected_state)
 {
 	gint32 old_state = SGEN_CAS (&block->state, new_state, expected_state);
@@ -1462,7 +1462,7 @@ try_set_block_state (MSBlockInfo *block, gint32 new_state, gint32 expected_state
 	return success;
 }
 
-static inline void
+static void
 set_block_state (MSBlockInfo *block, gint32 new_state, gint32 expected_state)
 {
 	SGEN_ASSERT (6, block->state == expected_state, "Block state incorrect before set");
@@ -1539,12 +1539,14 @@ sweep_block (MSBlockInfo *block)
 	return TRUE;
 }
 
-static inline int
+static int
 bitcount (mword d)
 {
 	int count = 0;
 
-#ifdef __GNUC__
+#if defined (__GNUC__) && !defined (HOST_WIN32)
+// The builtins do work on Win32, but can cause a not worthwhile runtime dependency.
+// See https://github.com/mono/mono/pull/14248.
 	if (sizeof (mword) == 8)
 		count += __builtin_popcountll (d);
 	else
@@ -2504,9 +2506,9 @@ scan_card_table_for_block (MSBlockInfo *block, CardTableScanType scan_type, Scan
 	 * size is no longer required to be a multiple of the system page size.
 	 */
 #ifndef SGEN_HAVE_OVERLAPPING_CARDS
-	guint8 *cards_copy = alloca (sizeof (guint8) * CARDS_PER_BLOCK);
+	guint8 *cards_copy = g_newa (guint8, CARDS_PER_BLOCK);
 #endif
-	guint8 *cards_preclean = alloca (sizeof (guint8) * CARDS_PER_BLOCK);
+	guint8 *cards_preclean = g_newa (guint8, CARDS_PER_BLOCK);
 	gboolean small_objects;
 	int block_obj_size;
 	char *block_start;
@@ -2609,7 +2611,8 @@ scan_card_table_for_block (MSBlockInfo *block, CardTableScanType scan_type, Scan
 					goto next_object;
 			}
 
-			GCObject *object = (GCObject*)obj;
+			GCObject *object;
+			object = (GCObject*)obj;
 
 			if (small_objects) {
 				HEAVY_STAT (++scanned_objects);

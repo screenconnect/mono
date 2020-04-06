@@ -175,7 +175,7 @@ insert_breakpoint (MonoSeqPointInfo *seq_points, MonoDomain *domain, MonoJitInfo
 	}
 
 	if (!it_has_sp) {
-		char *s = g_strdup_printf ("Unable to insert breakpoint at %s:%d", mono_method_full_name (jinfo_get_method (ji), TRUE), bp->il_offset);
+		char *s = g_strdup_printf ("Unable to insert breakpoint at %s:%ld", mono_method_full_name (jinfo_get_method (ji), TRUE), bp->il_offset);
 
 		mono_seq_point_iterator_init (&it, seq_points);
 		while (mono_seq_point_iterator_next (&it))
@@ -259,7 +259,7 @@ remove_breakpoint (BreakpointInstance *inst)
 /*
  * This doesn't take any locks.
  */
-static inline gboolean
+static gboolean
 bp_matches_method (MonoBreakpoint *bp, MonoMethod *method)
 {
 	int i;
@@ -337,7 +337,9 @@ mono_de_add_pending_breakpoints (MonoMethod *method, MonoJitInfo *ji)
 				}
 			}
 
-			g_assert (seq_points);
+			if (!seq_points)
+				/* Could be AOT code, or above "search_all_backends" call could have failed */
+				continue;
 
 			insert_breakpoint (seq_points, domain, ji, bp, NULL);
 		}
@@ -349,13 +351,12 @@ mono_de_add_pending_breakpoints (MonoMethod *method, MonoJitInfo *ji)
 static void
 set_bp_in_method (MonoDomain *domain, MonoMethod *method, MonoSeqPointInfo *seq_points, MonoBreakpoint *bp, MonoError *error)
 {
-	gpointer code;
 	MonoJitInfo *ji;
 
 	if (error)
 		error_init (error);
 
-	code = mono_jit_search_all_backends_for_jit_info (domain, method, &ji);
+	(void)mono_jit_search_all_backends_for_jit_info (domain, method, &ji);
 	g_assert (ji);
 
 	insert_breakpoint (seq_points, domain, ji, bp, error);
@@ -442,12 +443,12 @@ mono_de_set_breakpoint (MonoMethod *method, long il_offset, EventRequest *req, M
 
 	mono_loader_lock ();
 
-	CollectDomainData user_data = {
-		.bp = bp,
-		.methods = methods,
-		.method_domains = method_domains,
-		.method_seq_points = method_seq_points
-	};
+	CollectDomainData user_data;
+	memset (&user_data, 0, sizeof (user_data));
+	user_data.bp = bp;
+	user_data.methods = methods;
+	user_data.method_domains = method_domains;
+	user_data.method_seq_points = method_seq_points;
 	mono_de_foreach_domain (collect_domain_bp, &user_data);
 
 	for (i = 0; i < methods->len; ++i) {
@@ -465,12 +466,23 @@ mono_de_set_breakpoint (MonoMethod *method, long il_offset, EventRequest *req, M
 	g_ptr_array_free (method_domains, TRUE);
 	g_ptr_array_free (method_seq_points, TRUE);
 
-	if (error && !mono_error_ok (error)) {
+	if (error && !is_ok (error)) {
 		mono_de_clear_breakpoint (bp);
 		return NULL;
 	}
 
 	return bp;
+}
+
+MonoBreakpoint *
+mono_de_get_breakpoint_by_id (int id)
+{
+	for (int i = 0; i < breakpoints->len; ++i) {
+		MonoBreakpoint *bp = (MonoBreakpoint *)g_ptr_array_index (breakpoints, i);
+		if (bp->req->id == id)
+			return bp;
+	}
+	return NULL;
 }
 
 void
@@ -920,7 +932,7 @@ mono_de_ss_update (SingleStepReq *req, MonoJitInfo *ji, SeqPoint *sp, void *tls,
 		return FALSE;
 	}
 
-	if (req->depth == STEP_DEPTH_OVER && (sp->flags & MONO_SEQ_POINT_FLAG_NONEMPTY_STACK)) {
+	if (req->depth == STEP_DEPTH_OVER && (sp->flags & MONO_SEQ_POINT_FLAG_NONEMPTY_STACK) && !(sp->flags & MONO_SEQ_POINT_FLAG_NESTED_CALL)) {
 		/*
 		 * These seq points are inserted by the JIT after calls, step over needs to skip them.
 		 */
@@ -1002,7 +1014,6 @@ mono_de_process_breakpoint (void *void_tls, gboolean from_signal)
 	guint8 *ip;
 	int i;
 	guint32 native_offset;
-	MonoBreakpoint *bp;
 	GPtrArray *bp_reqs, *ss_reqs_orig, *ss_reqs;
 	EventKind kind = EVENT_KIND_BREAKPOINT;
 	MonoContext *ctx = rt_callbacks.tls_get_restore_state (tls);
@@ -1050,7 +1061,6 @@ mono_de_process_breakpoint (void *void_tls, gboolean from_signal)
 
 	mono_debugger_log_bp_hit (tls, method, sp.il_offset);
 
-	bp = NULL;
 	mono_de_collect_breakpoints_by_sp (&sp, ji, ss_reqs_orig, bp_reqs);
 
 	if (bp_reqs->len == 0 && ss_reqs_orig->len == 0) {
@@ -1140,7 +1150,7 @@ static gboolean
 ss_bp_is_unique (GSList *bps, GHashTable *ss_req_bp_cache, MonoMethod *method, guint32 il_offset)
 {
 	if (ss_req_bp_cache) {
-		MonoBreakpoint dummy = {method, il_offset, NULL, NULL};
+		MonoBreakpoint dummy = {method, (long)il_offset, NULL, NULL};
 		return !g_hash_table_lookup (ss_req_bp_cache, &dummy);
 	}
 	for (GSList *l = bps; l; l = l->next) {
@@ -1218,7 +1228,7 @@ is_last_non_empty (SeqPoint* sp, MonoSeqPointInfo *info)
 	SeqPoint* next = g_new (SeqPoint, sp->next_len);
 	mono_seq_point_init_next (info, *sp, next);
 	for (int i = 0; i < sp->next_len; i++) {
-		if (next [i].flags & MONO_SEQ_POINT_FLAG_NONEMPTY_STACK) {
+		if (next [i].flags & MONO_SEQ_POINT_FLAG_NONEMPTY_STACK && !(next [i].flags & MONO_SEQ_POINT_FLAG_NESTED_CALL)) {
 			if (!is_last_non_empty (&next [i], info)) {
 				g_free (next);
 				return FALSE;
@@ -1266,6 +1276,10 @@ mono_de_ss_start (SingleStepReq *ss_req, SingleStepArgs *ss_args)
 	DbgEngineStackFrame **frames = ss_args->frames;
 	int nframes = ss_args->nframes;
 	SeqPoint *sp = &ss_args->sp;
+
+	/* this can happen on a single step in a exception on android (Mono_UnhandledException_internal) and on IOS */
+	if (!method)
+		return;
 
 	/*
 	 * Implement single stepping using breakpoints if possible.
@@ -1545,4 +1559,13 @@ mono_de_cleanup (void)
 	domains_cleanup ();
 }
 
+void
+mono_debugger_free_objref (gpointer value)
+{
+	ObjRef *o = (ObjRef *)value;
+
+	mono_gchandle_free_internal (o->handle);
+
+	g_free (o);
+}
 #endif

@@ -8,6 +8,7 @@
 #include "config.h"
 #include "utils/mono-proclib.h"
 #include "utils/mono-time.h"
+#include "utils/mono-errno.h"
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -21,7 +22,9 @@
 #endif
 
 #include <utils/mono-mmap.h>
+#include <utils/strenc-internals.h>
 #include <utils/strenc.h>
+#include <utils/mono-error-internals.h>
 #include <utils/mono-io-portability.h>
 #include <utils/mono-logger-internals.h>
 
@@ -29,7 +32,9 @@
 #ifdef HAVE_SYS_ERRNO_H
 #include <sys/errno.h>
 #endif
+#ifdef HAVE_SYS_PARAM_H
 #include <sys/param.h>
+#endif
 #include <errno.h>
 #ifdef HAVE_SYS_TYPES_H
 #include <sys/types.h>
@@ -219,8 +224,7 @@ mono_process_list (int *size)
 	*size = i;
 
 cleanup:
-	if (procs)
-		g_free (procs);
+	g_free (procs);
 	return buf;
 #else
 	const char *name;
@@ -964,7 +968,7 @@ mono_cpu_get_data (int cpu_id, MonoCpuData data, MonoProcessError *error)
 int
 mono_atexit (void (*func)(void))
 {
-#ifdef HOST_ANDROID
+#if defined(HOST_ANDROID) || !defined(HAVE_ATEXIT)
 	/* Some versions of android libc doesn't define atexit () */
 	return 0;
 #else
@@ -975,7 +979,7 @@ mono_atexit (void (*func)(void))
 #ifndef HOST_WIN32
 
 gboolean
-mono_pe_file_time_date_stamp (gunichar2 *filename, guint32 *out)
+mono_pe_file_time_date_stamp (const gunichar2 *filename, guint32 *out)
 {
 	void *map_handle;
 	gint32 map_size;
@@ -1007,23 +1011,33 @@ mono_pe_file_time_date_stamp (gunichar2 *filename, guint32 *out)
 }
 
 gpointer
-mono_pe_file_map (gunichar2 *filename, gint32 *map_size, void **handle)
+mono_pe_file_map (const gunichar2 *filename, gint32 *map_size, void **handle)
 {
 	gchar *filename_ext = NULL;
 	gchar *located_filename = NULL;
 	int fd = -1;
 	struct stat statbuf;
 	gpointer file_map = NULL;
+	ERROR_DECL (error);
 
 	/* According to the MSDN docs, a search path is applied to
 	 * filename.  FIXME: implement this, for now just pass it
 	 * straight to open
 	 */
 
-	filename_ext = mono_unicode_to_external (filename);
+	filename_ext = mono_unicode_to_external_checked (filename, error);
+	// This block was added to diagnose https://github.com/mono/mono/issues/14730, remove after resolved
+	if (G_UNLIKELY (filename_ext == NULL)) {
+		GString *raw_bytes = g_string_new (NULL);
+		const gunichar2 *p = filename;
+		while (*p)
+			g_string_append_printf (raw_bytes, "%04X ", *p++);
+		g_assertf (filename_ext != NULL, "%s: unicode conversion returned NULL; %s; input was: %s", __func__, mono_error_get_message (error), raw_bytes->str);
+		g_string_free (raw_bytes, TRUE);
+	}
 	if (filename_ext == NULL) {
-		mono_trace (G_LOG_LEVEL_DEBUG, MONO_TRACE_IO_LAYER_PROCESS, "%s: unicode conversion returned NULL", __func__);
-
+		mono_trace (G_LOG_LEVEL_DEBUG, MONO_TRACE_IO_LAYER_PROCESS, "%s: unicode conversion returned NULL; %s", __func__, mono_error_get_message (error));
+		mono_error_cleanup (error);
 		goto exit;
 	}
 
@@ -1033,26 +1047,26 @@ mono_pe_file_map (gunichar2 *filename, gint32 *map_size, void **handle)
 
 		located_filename = mono_portability_find_file (filename_ext, TRUE);
 		if (!located_filename) {
-			errno = saved_errno;
+			mono_set_errno (saved_errno);
 
 			mono_trace (G_LOG_LEVEL_DEBUG, MONO_TRACE_IO_LAYER_PROCESS, "%s: Error opening file %s (3): %s", __func__, filename_ext, strerror (errno));
-			goto error;
+			goto exit;
 		}
 
 		fd = open (located_filename, O_RDONLY, 0);
 		if (fd == -1) {
 			mono_trace (G_LOG_LEVEL_DEBUG, MONO_TRACE_IO_LAYER_PROCESS, "%s: Error opening file %s (3): %s", __func__, filename_ext, strerror (errno));
-			goto error;
+			goto exit;
 		}
 	}
 	else if (fd == -1) {
 		mono_trace (G_LOG_LEVEL_DEBUG, MONO_TRACE_IO_LAYER_PROCESS, "%s: Error opening file %s (3): %s", __func__, filename_ext, strerror (errno));
-		goto error;
+		goto exit;
 	}
 
 	if (fstat (fd, &statbuf) == -1) {
 		mono_trace (G_LOG_LEVEL_DEBUG, MONO_TRACE_IO_LAYER_PROCESS, "%s: Error stat()ing file %s: %s", __func__, filename_ext, strerror (errno));
-		goto error;
+		goto exit;
 	}
 	*map_size = statbuf.st_size;
 
@@ -1066,7 +1080,7 @@ mono_pe_file_map (gunichar2 *filename, gint32 *map_size, void **handle)
 	file_map = mono_file_map (statbuf.st_size, MONO_MMAP_READ | MONO_MMAP_PRIVATE, fd, 0, handle);
 	if (file_map == NULL) {
 		mono_trace (G_LOG_LEVEL_DEBUG, MONO_TRACE_IO_LAYER_PROCESS, "%s: Error mmap()int file %s: %s", __func__, filename_ext, strerror (errno));
-		goto error;
+		goto exit;
 	}
 exit:
 	if (fd != -1)
@@ -1074,8 +1088,6 @@ exit:
 	g_free (located_filename);
 	g_free (filename_ext);
 	return file_map;
-error:
-	goto exit;
 }
 
 void

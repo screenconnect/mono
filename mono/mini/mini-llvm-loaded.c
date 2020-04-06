@@ -14,13 +14,15 @@ typedef struct {
 	void (*cleanup)(void);
 	void (*emit_method)(MonoCompile *cfg);
 	void (*emit_call)(MonoCompile *cfg, MonoCallInst *call);
-	void (*create_aot_module)(MonoAssembly *assembly, const char *global_prefix, int initial_got_size, gboolean emit_dwarf, gboolean static_link, gboolean llvm_only);
+	void (*create_aot_module)(MonoAssembly *assembly, const char *global_prefix, int initial_got_size, LLVMModuleFlags flags);
+	void (*fixup_aot_module)(void);
 	void (*emit_aot_module)(const char *filename, const char *cu_name);
 	void (*check_method_supported)(MonoCompile *cfg);
 	void (*emit_aot_file_info)(MonoAotFileInfo *info, gboolean has_jitted_code);
 	void (*emit_aot_data)(const char *symbol, guint8 *data, int data_len);
 	void (*free_domain_info)(MonoDomain *domain);
 	void (*create_vars)(MonoCompile *cfg);
+	MonoCPUFeatures (*get_cpu_features)(void);
 } LoadedBackend;
 
 static LoadedBackend backend;
@@ -50,15 +52,21 @@ mono_llvm_emit_call (MonoCompile *cfg, MonoCallInst *call)
 }
 
 void
-mono_llvm_create_aot_module (MonoAssembly *assembly, const char *global_prefix, int initial_got_size, gboolean emit_dwarf, gboolean static_link, gboolean llvm_only)
+mono_llvm_create_aot_module (MonoAssembly *assembly, const char *global_prefix, int initial_got_size, LLVMModuleFlags flags)
 {
-	backend.create_aot_module (assembly, global_prefix, initial_got_size, emit_dwarf, static_link, llvm_only);
+	backend.create_aot_module (assembly, global_prefix, initial_got_size, flags);
 }
 
 void
 mono_llvm_emit_aot_module (const char *filename, const char *cu_name)
 {
 	backend.emit_aot_module (filename, cu_name);
+}
+
+void
+mono_llvm_fixup_aot_module (void)
+{
+	backend.fixup_aot_module ();
 }
 
 void
@@ -117,6 +125,8 @@ mono_llvm_load (const char* bpath)
 	if (err) goto symbol_error;
 	err = mono_dl_symbol (llvm_lib, "mono_llvm_emit_aot_module", (void**)&backend.emit_aot_module);
 	if (err) goto symbol_error;
+	err = mono_dl_symbol (llvm_lib, "mono_llvm_fixup_aot_module", (void**)&backend.fixup_aot_module);
+	if (err) goto symbol_error;
 	err = mono_dl_symbol (llvm_lib, "mono_llvm_check_method_supported", (void**)&backend.check_method_supported);
 	if (err) goto symbol_error;
 	err = mono_dl_symbol (llvm_lib, "mono_llvm_free_domain_info", (void**)&backend.free_domain_info);
@@ -127,11 +137,18 @@ mono_llvm_load (const char* bpath)
 	if (err) goto symbol_error;
 	err = mono_dl_symbol (llvm_lib, "mono_llvm_create_vars", (void**)&backend.create_vars);
 	if (err) goto symbol_error;
+	err = mono_dl_symbol (llvm_lib, "mono_llvm_get_cpu_features", (void**)&backend.get_cpu_features);
+	if (err) goto symbol_error;
 	return TRUE;
 symbol_error:
 	g_warning ("llvm symbol load failed: %s\n", err);
 	g_free (err);
 	return FALSE;
+}
+
+MonoCPUFeatures mono_llvm_get_cpu_features (void)
+{
+	return backend.get_cpu_features ();
 }
 
 #else

@@ -23,6 +23,7 @@ namespace System.IO {
     using System.Globalization;
     using System.Diagnostics.Contracts;
     using System.Security;
+    using System.Buffers.Binary;
 
 [System.Runtime.InteropServices.ComVisible(true)]
     public class BinaryReader : IDisposable
@@ -243,6 +244,12 @@ namespace System.IO {
             try {
                 int[] ints = new int[4];
                 Buffer.BlockCopy(m_buffer, 0, ints, 0, 16);
+                if (!BitConverter.IsLittleEndian) {
+                    // We need to reverse the ints on BE
+                    for (int i = 0; i < 4; i++) {
+                         ints[i] = BinaryPrimitives.ReverseEndianness(ints[i]);
+                    }
+                }
                 return new decimal(ints);
             }
             catch (ArgumentException e) {
@@ -510,6 +517,20 @@ namespace System.IO {
 
             return chars;
         }
+
+#if MONO
+        public virtual int Read(Span<char> buffer)
+        {
+            char[] bufferBytes = buffer.ToArray();
+            return Read(bufferBytes, 0, bufferBytes.Length);
+        }
+
+        public virtual int Read(Span<byte> buffer)
+        {
+            byte[] bufferBytes = buffer.ToArray();
+            return Read(bufferBytes, 0, bufferBytes.Length);
+        }
+#endif
 
         public virtual int Read(byte[] buffer, int index, int count) {
             if (buffer==null)

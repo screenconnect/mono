@@ -219,20 +219,19 @@ verify_alloc_records (void)
 
 /*********************************************************************************/
 
-
-static inline gpointer
+static gpointer
 mask (gpointer n, uintptr_t bit)
 {
 	return (gpointer)(((uintptr_t)n) | bit);
 }
 
-static inline gpointer
+static gpointer
 unmask (gpointer p)
 {
 	return (gpointer)((uintptr_t)p & ~(uintptr_t)0x3);
 }
 
-static inline uintptr_t
+static uintptr_t
 get_mark (gpointer n)
 {
 	return (uintptr_t)n & 0x1;
@@ -711,7 +710,7 @@ add_nursery_frag_checks (SgenFragmentAllocator *allocator, char *frag_start, cha
 }
 
 mword
-sgen_build_nursery_fragments (GCMemSection *nursery_section, SgenGrayQueue *unpin_queue)
+sgen_build_nursery_fragments (GCMemSection *nursery_section)
 {
 	char *frag_start, *frag_end;
 	size_t frag_size;
@@ -747,10 +746,7 @@ sgen_build_nursery_fragments (GCMemSection *nursery_section, SgenGrayQueue *unpi
 			addr1 = frags_ranges->fragment_start;
 
 		if (addr0 < addr1) {
-			if (unpin_queue)
-				GRAY_OBJECT_ENQUEUE_SERIAL (unpin_queue, (GCObject*)addr0, sgen_obj_get_descriptor_safe ((GCObject*)addr0));
-			else
-				SGEN_UNPIN_OBJECT (addr0);
+			SGEN_UNPIN_OBJECT (addr0);
 			size = SGEN_ALIGN_UP (sgen_safe_object_get_size ((GCObject*)addr0));
 			CANARIFY_SIZE (size);
 			sgen_set_nursery_scan_start (addr0);
@@ -797,7 +793,7 @@ sgen_build_nursery_fragments (GCMemSection *nursery_section, SgenGrayQueue *unpi
 		SGEN_LOG (1, "Nursery fully pinned");
 		for (pin_entry = pin_start; pin_entry < pin_end; ++pin_entry) {
 			GCObject *p = (GCObject *)*pin_entry;
-			SGEN_LOG (3, "Bastard pinning obj %p (%s), size: %zd", p, sgen_client_vtable_get_name (SGEN_LOAD_VTABLE (p)), sgen_safe_object_get_size (p));
+			SGEN_LOG (3, "Bastard pinning obj %p (%s), size: %ld", p, sgen_client_vtable_get_name (SGEN_LOAD_VTABLE (p)), (long)sgen_safe_object_get_size (p));
 		}
 	}
 	return fragment_total;

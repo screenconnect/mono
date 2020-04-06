@@ -89,7 +89,7 @@ namespace Mono
 					return;
 
 #if MONO_FEATURE_BTLS || MONO_FEATURE_APPLETLS
-			provider = MonoTlsProviderFactory.GetProvider ();
+				provider = MonoTlsProviderFactory.GetProvider ();
 #endif
 				x509pal = GetX509Pal ();
 			}
@@ -159,16 +159,15 @@ namespace Mono
 			if (cert.Impl == null)
 				return null;
 
-			X509Certificate2Impl impl = null;
+			var impl = cert.Impl as X509Certificate2Impl;
+			if (impl != null)
+				return (X509Certificate2Impl)impl.Clone ();
+
 			if ((importFlags & CertificateImportFlags.DisableNativeBackend) == 0) {
 				impl = X509Pal.Import (cert);
 				if (impl != null)
 					return impl;
 			}
-
-			impl = cert.Impl as X509Certificate2Impl;
-			if (impl != null)
-				return (X509Certificate2Impl)impl.Clone ();
 
 			if ((importFlags & CertificateImportFlags.DisableAutomaticFallback) != 0)
 				return null;

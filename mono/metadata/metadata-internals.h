@@ -5,6 +5,7 @@
 #ifndef __MONO_METADATA_INTERNALS_H__
 #define __MONO_METADATA_INTERNALS_H__
 
+#include "mono/utils/mono-forward-internal.h"
 #include "mono/metadata/image.h"
 #include "mono/metadata/blob.h"
 #include "mono/metadata/cil-coff.h"
@@ -18,6 +19,7 @@
 #include "mono/utils/mono-value-hash.h"
 #include <mono/utils/mono-error.h>
 #include "mono/utils/mono-conc-hashtable.h"
+#include "mono/utils/refcount.h"
 
 struct _MonoType {
 	union {
@@ -36,12 +38,92 @@ struct _MonoType {
 };
 
 typedef struct {
+	unsigned int required : 1;
+	MonoType *type;
+} MonoSingleCustomMod;
+
+/* Aggregate custom modifiers can happen if a generic VAR or MVAR is inflated,
+ * and both the VAR and the type that will be used to inflated it have custom
+ * modifiers, but they come from different images.  (e.g. inflating 'class G<T>
+ * {void Test (T modopt(IsConst) t);}' with 'int32 modopt(IsLong)' where G is
+ * in image1 and the int32 is in image2.)
+ *
+ * Moreover, we can't just store an image and a type token per modifier, because
+ * Roslyn and C++/CLI sometimes create modifiers that mention generic parameters that must be inflated, like:
+ *     void .CL1`1.Test(!0 modopt(System.Nullable`1<!0>))
+ * So we have to store a resolved MonoType*.
+ *
+ * Because the types come from different images, we allocate the aggregate
+ * custom modifiers container object in the mempool of a MonoImageSet to ensure
+ * that it doesn't have dangling image pointers.
+ */
+typedef struct {
+	uint8_t count;
+	MonoSingleCustomMod modifiers[1]; /* Actual length is count */
+} MonoAggregateModContainer;
+
+/* ECMA says upto 64 custom modifiers.  It's possible we could see more at
+ * runtime due to modifiers being appended together when we inflate type.  In
+ * that case we should revisit the places where this define is used to make
+ * sure that we don't blow up the stack (or switch to heap allocation for
+ * temporaries).
+ */
+#define MONO_MAX_EXPECTED_CMODS 64
+
+typedef struct {
 	MonoType unmodified;
-	MonoCustomModContainer cmods;
+	gboolean is_aggregate;
+	union {
+		MonoCustomModContainer cmods;
+		/* the actual aggregate modifiers are in a MonoImageSet mempool
+		 * that includes all the images of all the modifier types and
+		 * also the type that this aggregate container is a part of.*/
+		MonoAggregateModContainer *amods;
+	} mods;
 } MonoTypeWithModifiers;
+
+gboolean
+mono_type_is_aggregate_mods (const MonoType *t);
+
+static inline void
+mono_type_with_mods_init (MonoType *dest, uint8_t num_mods, gboolean is_aggregate)
+{
+	if (num_mods == 0) {
+		dest->has_cmods = 0;
+		return;
+	}
+	dest->has_cmods = 1;
+	MonoTypeWithModifiers *dest_full = (MonoTypeWithModifiers *)dest;
+	dest_full->is_aggregate = !!is_aggregate;
+	if (is_aggregate)
+		dest_full->mods.amods = NULL;
+	else
+		dest_full->mods.cmods.count = num_mods;
+}
 
 MonoCustomModContainer *
 mono_type_get_cmods (const MonoType *t);
+
+MonoAggregateModContainer *
+mono_type_get_amods (const MonoType *t);
+
+void
+mono_type_set_amods (MonoType *t, MonoAggregateModContainer *amods);
+
+static inline uint8_t
+mono_type_custom_modifier_count (const MonoType *t)
+{
+	if (!t->has_cmods)
+		return 0;
+	MonoTypeWithModifiers *full = (MonoTypeWithModifiers *)t;
+	if (full->is_aggregate)
+		return full->mods.amods->count;
+	else
+		return full->mods.cmods.count;
+}
+
+MonoType *
+mono_type_get_custom_modifier (const MonoType *ty, uint8_t idx, gboolean *required, MonoError *error);
 
 // Note: sizeof (MonoType) is dangerous. It can copy the num_mods
 // field without copying the variably sized array. This leads to
@@ -53,10 +135,16 @@ mono_type_get_cmods (const MonoType *t);
 #define MONO_SIZEOF_TYPE sizeof (MonoType)
 
 size_t 
-mono_sizeof_type_with_mods (uint8_t num_mods);
+mono_sizeof_type_with_mods (uint8_t num_mods, gboolean aggregate);
 
 size_t 
 mono_sizeof_type (const MonoType *ty);
+
+size_t
+mono_sizeof_aggregate_modifiers (uint8_t num_mods);
+
+MonoAggregateModContainer *
+mono_metadata_get_canonical_aggregate_modifiers (MonoAggregateModContainer *candidate);
 
 #define MONO_SECMAN_FLAG_INIT(x)		(x & 0x2)
 #define MONO_SECMAN_FLAG_GET_VALUE(x)		(x & 0x1)
@@ -81,7 +169,11 @@ struct _MonoAssemblyName {
 	uint32_t hash_alg;
 	uint32_t hash_len;
 	uint32_t flags;
+#ifdef ENABLE_NETCORE
+	int major, minor, build, revision, arch;
+#else
 	uint16_t major, minor, build, revision, arch;
+#endif
 };
 
 struct MonoTypeNameParse {
@@ -206,8 +298,6 @@ struct _MonoTableInfo {
 
 #define REFERENCE_MISSING ((gpointer) -1)
 
-typedef struct _MonoDllMap MonoDllMap;
-
 typedef struct {
 	gboolean (*match) (MonoImage*);
 	gboolean (*load_pe_data) (MonoImage*);
@@ -215,23 +305,34 @@ typedef struct {
 	gboolean (*load_tables) (MonoImage*);
 } MonoImageLoader;
 
-struct _MonoImage {
-	/*
-	 * This count is incremented during these situations:
-	 *   - An assembly references this MonoImage though its 'image' field
-	 *   - This MonoImage is present in the 'files' field of an image
-	 *   - This MonoImage is present in the 'modules' field of an image
-	 *   - A thread is holding a temporary reference to this MonoImage between
-	 *     calls to mono_image_open and mono_image_close ()
-	 */
-	int   ref_count;
+/* Represents the physical bytes for an image (usually in the file system, but
+ * could be in memory).
+ *
+ * The MonoImageStorage owns the raw data for an image and is responsible for
+ * cleanup.
+ *
+ * May be shared by multiple MonoImage objects if they opened the same
+ * underlying file or byte blob in memory.
+ *
+ * There is an abstract string key (usually a file path, but could be formed in
+ * other ways) that is used to share MonoImageStorage objects among images.
+ *
+ */
+typedef struct {
+	MonoRefCount ref;
+
+	/* key used for lookups.  owned by this image storage. */
+	char *key;
 
 	/* If the raw data was allocated from a source such as mmap, the allocator may store resource tracking information here. */
 	void *raw_data_handle;
 	char *raw_data;
 	guint32 raw_data_len;
+	/* data was allocated with mono_file_map and must be unmapped */
 	guint8 raw_buffer_used    : 1;
+	/* data was allocated with malloc and must be freed */
 	guint8 raw_data_allocated : 1;
+	/* data was allocated with mono_file_map_fileio */
 	guint8 fileio_used : 1;
 
 #ifdef HOST_WIN32
@@ -241,6 +342,24 @@ struct _MonoImage {
 	/* Module entry point is _CorDllMain. */
 	guint8 has_entry_point : 1;
 #endif
+} MonoImageStorage;
+
+struct _MonoImage {
+	/*
+	 * This count is incremented during these situations:
+	 *   - An assembly references this MonoImage through its 'image' field
+	 *   - This MonoImage is present in the 'files' field of an image
+	 *   - This MonoImage is present in the 'modules' field of an image
+	 *   - A thread is holding a temporary reference to this MonoImage between
+	 *     calls to mono_image_open and mono_image_close ()
+	 */
+	int   ref_count;
+
+	MonoImageStorage *storage;
+
+	/* Aliases storage->raw_data when storage is non-NULL. Otherwise NULL. */
+	char *raw_data;
+	guint32 raw_data_len;
 
 	/* Whenever this is a dynamically emitted module */
 	guint8 dynamic : 1;
@@ -267,8 +386,11 @@ struct _MonoImage {
 	/* Whenever this image is considered as platform code for the CoreCLR security model */
 	guint8 core_clr_platform_code : 1;
 
-	/* The path to the file for this image. */
+	/* The path to the file for this image or an arbitrary name for images loaded from data. */
 	char *name;
+
+	/* The path to the file for this image or NULL */
+	char *filename;
 
 	/* The assembly name reported in the file for this image (expected to be NULL for a netmodule) */
 	const char *assembly_name;
@@ -280,7 +402,7 @@ struct _MonoImage {
 	char *version;
 	gint16 md_version_major, md_version_minor;
 	char *guid;
-	void *image_info;
+	MonoCLIImageInfo    *image_info;
 	MonoMemPool         *mempool; /*protected by the image lock*/
 
 	char                *raw_metadata;
@@ -314,6 +436,7 @@ struct _MonoImage {
 	 * table, where the module table is a subset of the file table. We track both lists,
 	 * and because we can lazy-load them at different times we reference-increment both.
 	 */
+	/* No netmodules in netcore, but for System.Reflection.Emit support we still use modules */
 	MonoImage **modules;
 	guint32 module_count;
 	gboolean *modules_loaded;
@@ -321,7 +444,7 @@ struct _MonoImage {
 	MonoImage **files;
 	guint32 file_count;
 
-	gpointer aot_module;
+	MonoAotModule *aot_module;
 
 	guint8 aotid[16];
 
@@ -329,6 +452,13 @@ struct _MonoImage {
 	 * The Assembly this image was loaded from.
 	 */
 	MonoAssembly *assembly;
+
+#ifdef ENABLE_NETCORE
+	/*
+	 * The AssemblyLoadContext that this image was loaded into.
+	 */
+	MonoAssemblyLoadContext *alc;
+#endif
 
 	/*
 	 * Indexed by method tokens and typedef tokens.
@@ -348,7 +478,6 @@ struct _MonoImage {
 	MonoConcurrentHashTable *typespec_cache; /* protected by the image lock */
 	/* indexed by token */
 	GHashTable *memberref_signatures;
-	GHashTable *helper_signatures;
 
 	/* Indexed by blob heap indexes */
 	GHashTable *method_signatures;
@@ -404,8 +533,10 @@ struct _MonoImage {
 	 */
 	void *user_info;
 
+#ifndef DISABLE_DLLMAP
 	/* dll map entries */
 	MonoDllMap *dll_map;
+#endif
 
 	/* interfaces IDs from this image */
 	/* protected by the classes lock */
@@ -431,11 +562,10 @@ struct _MonoImage {
 	MonoConcurrentHashTable *var_gparam_cache;
 	MonoConcurrentHashTable *mvar_gparam_cache;
 
+#ifndef ENABLE_NETCORE
 	/* Maps malloc-ed char* pinvoke scope -> MonoDl* */
 	GHashTable *pinvoke_scopes;
-
-	/* Maps malloc-ed char* pinvoke scope -> malloced-ed char* filename */
-	GHashTable *pinvoke_scope_filenames;
+#endif
 
 	/* Indexed by MonoGenericParam pointers */
 	GHashTable **gshared_types;
@@ -462,7 +592,7 @@ struct _MonoImage {
 };
 
 /*
- * Generic instances depend on many images, and they need to be deleted if one
+ * Generic instances and aggregated custom modifiers depend on many images, and they need to be deleted if one
  * of the images they depend on is unloaded. For example,
  * List<Foo> depends on both List's image and Foo's image.
  * A MonoImageSet is the owner of all generic instances depending on the same set of
@@ -480,6 +610,8 @@ typedef struct {
 	GHashTable *szarray_cache, *array_cache, *ptr_cache;
 
 	MonoWrapperCaches wrapper_caches;
+
+	GHashTable *aggregate_modifiers_cache;
 
 	mono_mutex_t    lock;
 
@@ -611,6 +743,8 @@ struct _MonoMethodHeader {
 	unsigned int init_locals : 1;
 	guint16      num_locals;
 	MonoExceptionClause *clauses;
+	MonoBitSet  *volatile_args;
+	MonoBitSet  *volatile_locals;
 	MonoType    *locals [MONO_ZERO_LEN_ARRAY];
 };
 
@@ -622,6 +756,7 @@ typedef struct {
 	gboolean     has_locals;
 } MonoMethodHeaderSummary;
 
+// FIXME? offsetof (MonoMethodHeader, locals)?
 #define MONO_SIZEOF_METHOD_HEADER (sizeof (struct _MonoMethodHeader) - MONO_ZERO_LEN_ARRAY * SIZEOF_VOID_P)
 
 struct _MonoMethodSignature {
@@ -701,7 +836,7 @@ char*
 mono_image_strdup_vprintf (MonoImage *image, const char *format, va_list args);
 
 char*
-mono_image_strdup_printf (MonoImage *image, const char *format, ...) MONO_ATTR_FORMAT_PRINTF(2,3);;
+mono_image_strdup_printf (MonoImage *image, const char *format, ...) MONO_ATTR_FORMAT_PRINTF(2,3);
 
 GList*
 mono_g_list_prepend_image (MonoImage *image, GList *list, gpointer data);
@@ -759,6 +894,9 @@ mono_image_set_unlock (MonoImageSet *set);
 char*
 mono_image_set_strdup (MonoImageSet *set, const char *s);
 
+MonoImageSet *
+mono_metadata_get_image_set_for_aggregate_modifiers (MonoAggregateModContainer *amods);
+
 #define mono_image_set_new0(image,type,size) ((type *) mono_image_set_alloc0 (image, sizeof (type)* (size)))
 
 gboolean
@@ -769,6 +907,8 @@ mono_image_load_metadata (MonoImage *image, MonoCLIImageInfo *iinfo);
 
 const char*
 mono_metadata_string_heap_checked (MonoImage *meta, uint32_t table_index, MonoError *error);
+const char *
+mono_metadata_blob_heap_null_ok (MonoImage *meta, guint32 index);
 const char*
 mono_metadata_blob_heap_checked (MonoImage *meta, uint32_t table_index, MonoError *error);
 gboolean
@@ -893,6 +1033,8 @@ void mono_unload_interface_ids (MonoBitSet *bitset);
 
 
 MonoType *mono_metadata_type_dup (MonoImage *image, const MonoType *original);
+MonoType *mono_metadata_type_dup_with_cmods (MonoImage *image, const MonoType *original, const MonoType *cmods_source);
+
 MonoMethodSignature  *mono_metadata_signature_dup_full (MonoImage *image,MonoMethodSignature *sig);
 MonoMethodSignature  *mono_metadata_signature_dup_mempool (MonoMemPool *mp, MonoMethodSignature *sig);
 MonoMethodSignature  *mono_metadata_signature_dup_add_this (MonoImage *image, MonoMethodSignature *sig, MonoClass *klass);
@@ -942,11 +1084,11 @@ gboolean mono_image_load_cli_data (MonoImage *image);
 
 void mono_image_load_names (MonoImage *image);
 
-MonoImage *mono_image_open_raw (const char *fname, MonoImageOpenStatus *status);
+MonoImage *mono_image_open_raw (MonoAssemblyLoadContext *alc, const char *fname, MonoImageOpenStatus *status);
 
-MonoImage *mono_image_open_metadata_only (const char *fname, MonoImageOpenStatus *status);
+MonoImage *mono_image_open_metadata_only (MonoAssemblyLoadContext *alc, const char *fname, MonoImageOpenStatus *status);
 
-MonoImage *mono_image_open_from_data_internal (char *data, guint32 data_len, gboolean need_copy, MonoImageOpenStatus *status, gboolean refonly, gboolean metadata_only, const char *name);
+MonoImage *mono_image_open_from_data_internal (MonoAssemblyLoadContext *alc, char *data, guint32 data_len, gboolean need_copy, MonoImageOpenStatus *status, gboolean refonly, gboolean metadata_only, const char *name);
 
 MonoException *mono_get_exception_field_access_msg (const char *msg);
 
@@ -993,7 +1135,7 @@ mono_image_set_description (MonoImageSet *);
 MonoImageSet *
 mono_find_image_set_owner (void *ptr);
 
-MONO_API void
+void
 mono_loader_register_module (const char *name, MonoDl *module);
 
 gboolean
@@ -1008,14 +1150,144 @@ mono_loader_set_strict_strong_names (gboolean enabled);
 gboolean
 mono_loader_get_strict_strong_names (void);
 
-char*
-mono_signature_get_managed_fmt_string (MonoMethodSignature *sig);
-
 gboolean
 mono_type_in_image (MonoType *type, MonoImage *image);
+
+gboolean
+mono_type_is_valid_generic_argument (MonoType *type);
 
 MonoAssemblyContextKind
 mono_asmctx_get_kind (const MonoAssemblyContext *ctx);
 
-#endif /* __MONO_METADATA_INTERNALS_H__ */
+#define MONO_CLASS_IS_INTERFACE_INTERNAL(c) ((mono_class_get_flags (c) & TYPE_ATTRIBUTE_INTERFACE) || mono_type_is_generic_parameter (m_class_get_byval_arg (c)))
 
+static inline gboolean
+m_image_is_raw_data_allocated (MonoImage *image)
+{
+	return image->storage ? image->storage->raw_data_allocated : FALSE;
+}
+
+static inline gboolean
+m_image_is_fileio_used (MonoImage *image)
+{
+	return image->storage ? image->storage->fileio_used : FALSE;
+}
+
+#ifdef HOST_WIN32
+static inline gboolean
+m_image_is_module_handle (MonoImage *image)
+{
+	return image->storage ? image->storage->is_module_handle : FALSE;
+}
+
+static inline gboolean
+m_image_has_entry_point (MonoImage *image)
+{
+	return image->storage ? image->storage->has_entry_point : FALSE;
+}
+#endif
+
+static inline const char *
+m_image_get_name (MonoImage *image)
+{
+	return image->name;
+}
+
+static inline const char *
+m_image_get_filename (MonoImage *image)
+{
+	return image->filename;
+}
+
+static inline const char *
+m_image_get_assembly_name (MonoImage *image)
+{
+	return image->assembly_name;
+}
+
+static inline
+MonoAssemblyLoadContext *
+mono_image_get_alc (MonoImage *image)
+{
+#ifndef ENABLE_NETCORE
+	return NULL;
+#else
+	return image->alc;
+#endif
+}
+
+static inline
+MonoAssemblyLoadContext *
+mono_assembly_get_alc (MonoAssembly *assm)
+{
+	return mono_image_get_alc (assm->image);
+}
+
+/**
+ * mono_type_get_type_internal:
+ * \param type the \c MonoType operated on
+ * \returns the IL type value for \p type. This is one of the \c MonoTypeEnum
+ * enum members like \c MONO_TYPE_I4 or \c MONO_TYPE_STRING.
+ */
+static inline int
+mono_type_get_type_internal (MonoType *type)
+{
+	return type->type;
+}
+
+/**
+ * mono_type_get_signature:
+ * \param type the \c MonoType operated on
+ * It is only valid to call this function if \p type is a \c MONO_TYPE_FNPTR .
+ * \returns the \c MonoMethodSignature pointer that describes the signature
+ * of the function pointer \p type represents.
+ */
+static inline MonoMethodSignature*
+mono_type_get_signature_internal (MonoType *type)
+{
+	g_assert (type->type == MONO_TYPE_FNPTR);
+	return type->data.method;
+}
+
+/**
+ * mono_type_is_byref_internal:
+ * \param type the \c MonoType operated on
+ * \returns TRUE if \p type represents a type passed by reference,
+ * FALSE otherwise.
+ */
+static inline mono_bool
+mono_type_is_byref_internal (MonoType *type)
+{
+	return type->byref;
+}
+
+/**
+ * mono_type_get_class_internal:
+ * \param type the \c MonoType operated on
+ * It is only valid to call this function if \p type is a \c MONO_TYPE_CLASS or a
+ * \c MONO_TYPE_VALUETYPE . For more general functionality, use \c mono_class_from_mono_type_internal,
+ * instead.
+ * \returns the \c MonoClass pointer that describes the class that \p type represents.
+ */
+static inline MonoClass*
+mono_type_get_class_internal (MonoType *type)
+{
+	/* FIXME: review the runtime users before adding the assert here */
+	return type->data.klass;
+}
+
+/**
+ * mono_type_get_array_type_internal:
+ * \param type the \c MonoType operated on
+ * It is only valid to call this function if \p type is a \c MONO_TYPE_ARRAY .
+ * \returns a \c MonoArrayType struct describing the array type that \p type
+ * represents. The info includes details such as rank, array element type
+ * and the sizes and bounds of multidimensional arrays.
+ */
+static inline MonoArrayType*
+mono_type_get_array_type_internal (MonoType *type)
+{
+	return type->data.array;
+}
+
+#endif /* __MONO_METADATA_INTERNALS_H__ */

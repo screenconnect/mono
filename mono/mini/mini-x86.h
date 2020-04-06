@@ -11,12 +11,9 @@
 
 #ifdef HOST_WIN32
 #include <windows.h>
-/* use SIG* defines if possible */
-#ifdef HAVE_SIGNAL_H
 #include <signal.h>
-#endif
 
-typedef void (* MonoW32ExceptionHandler) (int _dummy, EXCEPTION_POINTERS *info, void *context);
+typedef void MONO_SIG_HANDLER_SIGNATURE ((*MonoW32ExceptionHandler));
 
 void win32_seh_init(void);
 void win32_seh_cleanup(void);
@@ -68,8 +65,10 @@ LONG CALLBACK seh_handler(EXCEPTION_POINTERS* ep);
 #define MONO_ARCH_SUPPORT_TASKLETS 1
 
 #ifndef DISABLE_SIMD
+#ifndef ENABLE_NETCORE
 #define MONO_ARCH_SIMD_INTRINSICS 1
 #define MONO_ARCH_NEED_SIMD_BANK 1
+#endif
 #endif
 
 /* we should lower this size and make sure we don't call heavy stack users in the segv handler */
@@ -155,9 +154,9 @@ typedef struct {
 	gboolean need_stack_frame_inited;
 	gboolean need_stack_frame;
 	int sp_fp_offset, param_area_size;
-	gpointer cinfo;
-	gpointer ss_tramp_var;
-	gpointer bp_tramp_var;
+	CallInfo *cinfo;
+	MonoInst *ss_tramp_var;
+	MonoInst *bp_tramp_var;
 } MonoCompileArch;
 
 #define MONO_CONTEXT_SET_LLVM_EXC_REG(ctx, exc) do { (ctx)->eax = (gsize)exc; } while (0)
@@ -166,7 +165,6 @@ typedef struct {
 
 #define MONO_INIT_CONTEXT_FROM_FUNC(ctx, start_func) do { \
     unsigned int stackptr; \
-	mono_arch_flush_register_windows (); \
     { \
 	   __asm mov stackptr, ebp \
     } \
@@ -178,7 +176,6 @@ typedef struct {
 #else
 
 #define MONO_INIT_CONTEXT_FROM_FUNC(ctx,start_func) do {	\
-		mono_arch_flush_register_windows ();	\
 		MONO_CONTEXT_SET_IP ((ctx), (start_func));	\
 		MONO_CONTEXT_SET_BP ((ctx), __builtin_frame_address (0));	\
 		MONO_CONTEXT_SET_SP ((ctx), __builtin_frame_address (0));	\
@@ -191,6 +188,9 @@ typedef struct {
 /* Enables OP_LSHL, OP_LSHL_IMM, OP_LSHR, OP_LSHR_IMM, OP_LSHR_UN, OP_LSHR_UN_IMM */
 #define MONO_ARCH_NO_EMULATE_LONG_SHIFT_OPS
 
+#define MONO_ARCH_EMULATE_FCONV_TO_U8 1
+#define MONO_ARCH_EMULATE_FCONV_TO_U4 1
+
 #define MONO_ARCH_NEED_DIV_CHECK 1
 #define MONO_ARCH_HAVE_IS_INT_OVERFLOW 1
 #define MONO_ARCH_HAVE_INVALIDATE_METHOD 1
@@ -199,7 +199,6 @@ typedef struct {
 #define MONO_ARCH_VTABLE_REG X86_EDX
 #define MONO_ARCH_RGCTX_REG MONO_ARCH_IMT_REG
 #define MONO_ARCH_HAVE_GENERALIZED_IMT_TRAMPOLINE 1
-#define MONO_ARCH_HAVE_SIGCTX_TO_MONOCTX 1
 #define MONO_ARCH_HAVE_FULL_AOT_TRAMPOLINES 1
 #define MONO_ARCH_GOT_REG X86_EBX
 #define MONO_ARCH_HAVE_GET_TRAMPOLINES 1
@@ -216,7 +215,12 @@ typedef struct {
 #define MONO_ARCH_AOT_SUPPORTED 1
 
 #define MONO_ARCH_GSHARED_SUPPORTED 1
+
 #define MONO_ARCH_LLVM_SUPPORTED 1
+#if defined(HOST_WIN32) && defined(TARGET_WIN32)
+// Only supported for Windows cross compiler builds, host == Win32, target != Win32.
+#undef MONO_ARCH_LLVM_SUPPORTED
+#endif
 
 #define MONO_ARCH_SOFT_DEBUG_SUPPORTED 1
 
@@ -237,14 +241,14 @@ typedef struct {
 /* Used for optimization, not complete */
 #define MONO_ARCH_IS_OP_MEMBASE(opcode) ((opcode) == OP_X86_PUSH_MEMBASE)
 
-#define MONO_ARCH_EMIT_BOUNDS_CHECK(cfg, array_reg, offset, index_reg) do { \
+#define MONO_ARCH_EMIT_BOUNDS_CHECK(cfg, array_reg, offset, index_reg, ex_name) do { \
             MonoInst *inst; \
             MONO_INST_NEW ((cfg), inst, OP_X86_COMPARE_MEMBASE_REG); \
             inst->inst_basereg = array_reg; \
             inst->inst_offset = offset; \
             inst->sreg2 = index_reg; \
             MONO_ADD_INS ((cfg)->cbb, inst); \
-			MONO_EMIT_NEW_COND_EXC (cfg, LE_UN, "IndexOutOfRangeException"); \
+			MONO_EMIT_NEW_COND_EXC (cfg, LE_UN, ex_name); \
 	} while (0)
 
 // Does the ABI have a volatile non-parameter register, so tailcall
@@ -310,7 +314,7 @@ typedef struct {
 	guint8 pass_empty_struct : 1; // Set in scenarios when empty structs needs to be represented as argument.
 } ArgInfo;
 
-typedef struct {
+struct CallInfo {
 	int nargs;
 	guint32 stack_usage;
 	guint32 reg_usage;
@@ -326,20 +330,20 @@ typedef struct {
 	ArgInfo ret;
 	ArgInfo sig_cookie;
 	ArgInfo args [1];
-} CallInfo;
+};
 
 guint32
 mono_x86_get_this_arg_offset (MonoMethodSignature *sig);
 
 void
-mono_x86_throw_exception (mgreg_t *regs, MonoObject *exc, 
-						  mgreg_t eip, gboolean rethrow);
+mono_x86_throw_exception (host_mgreg_t *regs, MonoObject *exc,
+						  host_mgreg_t eip, gboolean rethrow, gboolean preserve_ips);
 
 void
-mono_x86_throw_corlib_exception (mgreg_t *regs, guint32 ex_token_index, 
-								 mgreg_t eip, gint32 pc_offset);
+mono_x86_throw_corlib_exception (host_mgreg_t *regs, guint32 ex_token_index,
+								 host_mgreg_t eip, gint32 pc_offset);
 
-void 
+void
 mono_x86_patch (unsigned char* code, gpointer target);
 
 gpointer

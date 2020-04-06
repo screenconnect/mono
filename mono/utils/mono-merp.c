@@ -40,16 +40,19 @@
 #include <mono/utils/json.h>
 #include <mono/utils/mono-state.h>
 #include <utils/mono-threads-debug.h>
+#include <utils/mono-signal-handler.h>
 
 static const char *
-os_version_string (void)
+kernel_version_string (void)
 {
 #ifdef HAVE_SYS_UTSNAME_H
 	static struct utsname name;
 	static const char *version_string;
 
 	if (!version_string) {
-		memset (&name, 0, sizeof (name)); // WSL does not always nul terminate.
+		// WSL does not always nul terminate. WSL was fixed February 2018.
+		// Restore memset if variable made non-static.
+		//memset (&name, 0, sizeof (name));
 
 		if (uname (&name) >= 0)
 			version_string = name.release;
@@ -60,6 +63,61 @@ os_version_string (void)
 	return version_string;
 #endif
 	return "";
+}
+
+static gboolean
+starts_with (const char *pre, size_t pre_sz, const char *str)
+{
+    return strncmp (pre, str, pre_sz) == 0;
+}
+
+static const char *
+macos_version_string (void)
+{
+	/* Can't allocate in here, could be called from a signal handler in a
+	 * crashed process.
+	 */
+	static const char *version_string;
+	static char buf[256];
+	static const size_t buf_size = sizeof (buf);
+
+	if (version_string)
+		return version_string;
+
+	/* macOS 10.13.6 or later */
+	if (!version_string) {
+		size_t size = 0;
+		if (sysctlbyname ("kern.osproductversion", NULL, &size, NULL, 0) < 0 || size >= buf_size) {
+			/* if we couldn't get the size or if it needs more space that we have in buf, leave it empty */
+			version_string = "";
+			return version_string;
+		}
+
+		if (sysctlbyname ("kern.osproductversion", (char*)buf, &size, NULL, 0) >= 0)
+			version_string = &buf[0];
+	}
+	/* macOS 10.13.5 or older */
+	if (!version_string) {
+		const char *kv_string = kernel_version_string ();
+		if (starts_with (G_STRING_CONSTANT_AND_LENGTH ("17"), kv_string))
+			version_string = "10.13"; // High Sierra
+		else if (starts_with (G_STRING_CONSTANT_AND_LENGTH ("16"), kv_string))
+			version_string = "10.12"; // Sierra
+		else if (starts_with (G_STRING_CONSTANT_AND_LENGTH ("15"), kv_string))
+			version_string = "10.11"; // El Capitan
+		else if (starts_with (G_STRING_CONSTANT_AND_LENGTH ("14"), kv_string))
+			version_string = "10.10"; // Yosemite
+		else if (starts_with (G_STRING_CONSTANT_AND_LENGTH ("13"), kv_string))
+			version_string = "10.9"; // Mavericks
+		else if (starts_with (G_STRING_CONSTANT_AND_LENGTH ("12"), kv_string))
+			version_string = "10.8"; // Mountain Lion
+		else if (starts_with (G_STRING_CONSTANT_AND_LENGTH ("11"), kv_string))
+			version_string = "10.7"; // Lion
+	}
+	if (!version_string)
+		version_string = "";
+
+	return version_string;
 }
 
 // To get the path of the running process
@@ -87,7 +145,8 @@ typedef enum
 	MERP_EXC_SIGFPE = 7 ,
 	MERP_EXC_SIGTRAP = 8,
 	MERP_EXC_SIGKILL = 9,
-	MERP_EXC_HANG  = 10
+	MERP_EXC_HANG  = 10,
+	MERP_EXC_MANAGED_EXCEPTION = 11
 } MERPExcType;
 
 typedef struct {
@@ -109,16 +168,22 @@ typedef struct {
 	size_t moduleOffset;
 
 	const char *osVersion; 
-	int uiLidArg; // Application LCID 
+	int uiLidArg; // MONO_LOCALE_INVARIANT 0x007F
 
-	const char systemModel [100];
+	char systemModel [100];
 	const char *systemManufacturer;
 
-	const char *eventType;
+	const char *eventType; /* Must be MONO_MERP_EVENT_TYPE_STR */
 
 	MonoStackHash hashes;
 	GSList *annotations;
 } MERPStruct;
+
+/* The event type determines the format of the fields that are reported.  It
+ * must be MonoAppCrash for the rest of our report to make sense.
+ */
+#define MONO_MERP_EVENT_TYPE_STR "MonoAppCrash"
+
 
 typedef struct {
 	gboolean enable_merp;
@@ -198,6 +263,8 @@ get_merp_exctype (MERPExcType exc)
 			return "0x04000000";
 		case MERP_EXC_HANG: 
 			return "0x02000000";
+		case MERP_EXC_MANAGED_EXCEPTION:
+			return "0x05000000";
 		case MERP_EXC_NONE:
 			// Exception type documented as optional, not optional
 			g_assert_not_reached ();
@@ -209,22 +276,31 @@ get_merp_exctype (MERPExcType exc)
 static MERPExcType
 parse_exception_type (const char *signal)
 {
-	if (!strcmp (signal, "SIGSEGV"))
+	if (!strcmp (signal, mono_get_signame (SIGSEGV)))
 		return MERP_EXC_SIGSEGV;
 
-	if (!strcmp (signal, "SIGFPE"))
+	if (!strcmp (signal, mono_get_signame (SIGFPE)))
 		return MERP_EXC_SIGFPE;
 
-	if (!strcmp (signal, "SIGILL"))
+	if (!strcmp (signal, mono_get_signame (SIGILL)))
 		return MERP_EXC_SIGILL;
 
-	if (!strcmp (signal, "SIGABRT"))
+	if (!strcmp (signal, mono_get_signame (SIGABRT)))
 		return MERP_EXC_SIGABRT;
+
+	if (!strcmp (signal, mono_get_signame (SIGTRAP)))
+		return MERP_EXC_SIGTRAP;
+
+	if (!strcmp (signal, mono_get_signame (SIGSYS)))
+		return MERP_EXC_SIGSYS;
 
 	// Force quit == hang?
 	// We need a default for this
-	if (!strcmp (signal, "SIGTERM"))
+	if (!strcmp (signal, mono_get_signame (SIGTERM)))
 		return MERP_EXC_HANG;
+
+	if (!strcmp (signal, "MANAGED_EXCEPTION"))
+		return MERP_EXC_MANAGED_EXCEPTION;
 
 	// FIXME: There are no other such signal
 	// strings passed to mono_handle_native_crash at the
@@ -280,8 +356,6 @@ mono_merp_send (MERPStruct *merp)
 		exit (-1);
 	} else {
 		int status;
-		waitpid (pid, &status, 0);
-		gboolean exit_success = FALSE;
 		int exit_status = FALSE;
 
 		while (TRUE) {
@@ -290,8 +364,7 @@ mono_merp_send (MERPStruct *merp)
 
 			if (WIFEXITED(status)) {
 				exit_status = WEXITSTATUS(status);
-				exit_success = TRUE;
-				invoke_success = exit_status == TRUE;
+				invoke_success = (exit_status == 0);
 				break;
 			} else if (WIFSIGNALED(status)) {
 				break;
@@ -349,15 +422,18 @@ mono_init_merp (const intptr_t crashed_pid, const char *signal, MonoStackHash *h
 
 	merp->moduleOffset = 0;
 
-	merp->uiLidArg = ves_icall_System_Threading_Thread_current_lcid ();
-
-	merp->osVersion = os_version_string ();
+	merp->uiLidArg = MONO_LOCALE_INVARIANT;
+#if defined (TARGET_OSX)
+	merp->osVersion = macos_version_string ();
+#else
+	merp->osVersion = kernel_version_string ();
+#endif
 
 	// FIXME: THis is apple-only for now
 	merp->systemManufacturer = "apple";
 	get_apple_model ((char *) merp->systemModel, sizeof (merp->systemModel));
 
-	merp->eventType = config.eventType;
+	merp->eventType = MONO_MERP_EVENT_TYPE_STR;
 
 	merp->hashes = *hashes;
 
@@ -372,7 +448,7 @@ mono_merp_write_fingerprint_payload (const char *non_param_data, const MERPStruc
 
 	g_async_safe_fprintf(handle, "{\n");
 	g_async_safe_fprintf(handle, "\t\"payload\" : \n");
-	g_write (handle, non_param_data, (guint32)strlen (non_param_data));	\
+	g_write (handle, non_param_data, (guint32)strlen (non_param_data));
 	g_async_safe_fprintf(handle, ",\n");
 
 	g_async_safe_fprintf(handle, "\t\"parameters\" : \n{\n");
@@ -526,7 +602,6 @@ mono_merp_disable (void)
 	g_free ((char*)config.appSignature);
 	g_free ((char*)config.appVersion);
 	g_free ((char*)config.merpGUIPath);
-	g_free ((char*)config.eventType);
 	g_free ((char*)config.appPath); 
 	g_free ((char*)config.moduleVersion);
 	g_slist_free (config.annotations);
@@ -536,7 +611,7 @@ mono_merp_disable (void)
 }
 
 void
-mono_merp_enable (const char *appBundleID, const char *appSignature, const char *appVersion, const char *merpGUIPath, const char *eventType, const char *appPath, const char *configDir)
+mono_merp_enable (const char *appBundleID, const char *appSignature, const char *appVersion, const char *merpGUIPath, const char *appPath, const char *configDir)
 {
 	mono_memory_barrier ();
 
@@ -561,7 +636,6 @@ mono_merp_enable (const char *appBundleID, const char *appSignature, const char 
 	config.appSignature = g_strdup (appSignature);
 	config.appVersion = g_strdup (appVersion);
 	config.merpGUIPath = g_strdup (merpGUIPath);
-	config.eventType = g_strdup (eventType);
 	config.appPath = g_strdup (appPath);
 
 	config.log = g_getenv ("MONO_MERP_VERBOSE") != NULL;
@@ -576,5 +650,11 @@ mono_merp_enabled (void)
 {
 	return config.enable_merp;
 }
+
+#else
+
+#include <mono/utils/mono-compiler.h>
+
+MONO_EMPTY_SOURCE_FILE (mono_merp);
 
 #endif // TARGET_OSX

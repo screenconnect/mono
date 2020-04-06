@@ -36,14 +36,11 @@ ves_icall_System_Security_Principal_WindowsIdentity_GetCurrentToken (MonoError *
 	return mono_security_principal_windows_identity_get_current_token (error);
 }
 
-MonoArray*
-ves_icall_System_Security_Principal_WindowsIdentity_GetRoles (gpointer token)
+MonoArrayHandle
+ves_icall_System_Security_Principal_WindowsIdentity_GetRoles (gpointer token, MonoError *error)
 {
-	// FIXME This is now supported by UWP.
-	ERROR_DECL_VALUE (error); // FIXMEcoop
 	mono_security_win_not_supported ("GetTokenInformation", error);
-	mono_error_set_pending_exception (error); // FIXMEcoop
-	return NULL;
+	return NULL_HANDLE_ARRAY;
 }
 
 gpointer
@@ -54,26 +51,26 @@ ves_icall_System_Security_Principal_WindowsImpersonationContext_DuplicateToken (
 	return NULL;
 }
 
-gboolean
+MonoBoolean
 ves_icall_System_Security_Principal_WindowsImpersonationContext_SetCurrentToken (gpointer token, MonoError *error)
 {
 	mono_security_win_not_supported ("ImpersonateLoggedOnUser", error);
 	return FALSE;
 }
 
-gboolean
-ves_icall_System_Security_Principal_WindowsImpersonationContext_RevertToSelf (MonoError *error))
+MonoBoolean
+ves_icall_System_Security_Principal_WindowsImpersonationContext_RevertToSelf (MonoError *error)
 {
 	mono_security_win_not_supported ("RevertToSelf", error);
 	return FALSE;
 }
 
 gint32
-mono_security_win_get_token_name (gpointer token, gunichar2 ** uniname, MonoError *error)
+mono_security_win_get_token_name (gpointer token, gunichar2 **uniname, MonoError *error)
 {
 	// FIXME This is now supported by UWP.
 	mono_security_win_not_supported ("GetTokenInformation", error);
-	return FALSE;
+	return 0;
 }
 
 gboolean

@@ -37,7 +37,7 @@ recursively_make_pred_seq_points (MonoCompile *cfg, MonoBasicBlock *bb)
 	GHashTable *seen = g_hash_table_new_full (g_direct_hash, NULL, NULL, NULL);
 
 	// Insert/remove sentinel into the memoize table to detect loops containing bb
-	bb->pred_seq_points = MONO_SEQ_SEEN_LOOP;
+	bb->pred_seq_points = (MonoInst**)MONO_SEQ_SEEN_LOOP;
 
 	for (int i = 0; i < bb->in_count; ++i) {
 		MonoBasicBlock *in_bb = bb->in_bb [i];
@@ -78,7 +78,7 @@ recursively_make_pred_seq_points (MonoCompile *cfg, MonoBasicBlock *bb)
 		bb->num_pred_seq_points = predecessors->len;
 
 		for (int newer = 0; newer < bb->num_pred_seq_points; newer++) {
-			bb->pred_seq_points [newer] = g_array_index(predecessors, gpointer, newer);
+			bb->pred_seq_points [newer] = g_array_index(predecessors, MonoInst*, newer);
 		}
 	} 
 
@@ -124,7 +124,8 @@ mono_save_seq_point_info (MonoCompile *cfg, MonoJitInfo *jinfo)
 		sp->native_offset = ins->inst_offset;
 		if (ins->flags & MONO_INST_NONEMPTY_STACK)
 			sp->flags |= MONO_SEQ_POINT_FLAG_NONEMPTY_STACK;
-
+		if (ins->flags & MONO_INST_NESTED_CALL)
+			sp->flags |= MONO_SEQ_POINT_FLAG_NESTED_CALL;
 		/* Used below */
 		ins->backend.size = i;
 	}
@@ -253,6 +254,7 @@ mono_save_seq_point_info (MonoCompile *cfg, MonoJitInfo *jinfo)
 	cfg->seq_points = NULL;
 }
 
+/* LOCKING: Acquires the domain lock */
 MonoSeqPointInfo*
 mono_get_seq_points (MonoDomain *domain, MonoMethod *method)
 {
@@ -266,7 +268,7 @@ mono_get_seq_points (MonoDomain *domain, MonoMethod *method)
 		mono_error_assert_ok (error);
 	}
 
-	mono_loader_lock ();
+	mono_domain_lock (domain);
 	seq_points = (MonoSeqPointInfo *)g_hash_table_lookup (domain_jit_info (domain)->seq_points, method);
 	if (!seq_points && method->is_inflated) {
 		/* generic sharing + aot */
@@ -274,7 +276,7 @@ mono_get_seq_points (MonoDomain *domain, MonoMethod *method)
 		if (!seq_points)
 			seq_points = (MonoSeqPointInfo *)g_hash_table_lookup (domain_jit_info (domain)->seq_points, shared_method);
 	}
-	mono_loader_unlock ();
+	mono_domain_unlock (domain);
 
 	return seq_points;
 }

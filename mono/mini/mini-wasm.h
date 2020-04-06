@@ -8,8 +8,40 @@
 
 #define MONO_MAX_IREGS 1
 #define MONO_MAX_FREGS 1
+#define MONO_MAX_XREGS 1
 
 #define WASM_REG_0 0
+
+#define MONO_ARCH_USE_FPSTACK FALSE
+
+// Does the ABI have a volatile non-parameter register, so tailcall
+// can pass context to generics or interfaces?
+#define MONO_ARCH_HAVE_VOLATILE_NON_PARAM_REGISTER 0
+
+#define MONO_ARCH_AOT_SUPPORTED 1
+#define MONO_ARCH_LLVM_SUPPORTED 1
+#define MONO_ARCH_GSHARED_SUPPORTED 1
+#define MONO_ARCH_GSHAREDVT_SUPPORTED 1
+#define MONO_ARCH_HAVE_FULL_AOT_TRAMPOLINES 1
+#define MONO_ARCH_NEED_DIV_CHECK 1
+
+#define MONO_ARCH_EMULATE_FREM 1
+#define MONO_ARCH_EMULATE_FCONV_TO_U8 1
+#define MONO_ARCH_EMULATE_FCONV_TO_U4 1
+#define MONO_ARCH_NO_EMULATE_LONG_SHIFT_OPS 1
+#define MONO_ARCH_NO_EMULATE_LONG_MUL_OPTS 1
+#define MONO_ARCH_FLOAT32_SUPPORTED 1
+
+//mini-codegen stubs - this doesn't do anything
+#define MONO_ARCH_CALLEE_REGS (1 << 0)
+#define MONO_ARCH_CALLEE_FREGS (1 << 1)
+#define MONO_ARCH_CALLEE_XREGS (1 << 2)
+#define MONO_ARCH_CALLEE_SAVED_FREGS (1 << 3)
+#define MONO_ARCH_CALLEE_SAVED_REGS (1 << 4)
+#define MONO_ARCH_INST_FIXED_REG(desc) FALSE
+#define MONO_ARCH_INST_IS_REGPAIR(desc) FALSE
+#define MONO_ARCH_INST_REGPAIR_REG2(desc,hreg1) (-1)
+#define MONO_ARCH_INST_SREG2_MASK(ins) 0
 
 
 struct MonoLMF {
@@ -25,7 +57,7 @@ struct MonoLMF {
 };
 
 typedef struct {
-	int dummy;
+	gpointer cinfo;
 } MonoCompileArch;
 
 #define MONO_ARCH_INIT_TOP_LMF_ENTRY(lmf) do { (lmf)->top_entry = TRUE; } while (0)
@@ -47,18 +79,36 @@ typedef struct {
 /* must be at a power of 2 and >= 8 */
 #define MONO_ARCH_FRAME_ALIGNMENT 16
 
+#define MONO_ARCH_USE_FPSTACK FALSE
+
+// Does the ABI have a volatile non-parameter register, so tailcall
+// can pass context to generics or interfaces?
+#define MONO_ARCH_HAVE_VOLATILE_NON_PARAM_REGISTER 0
+
+#define MONO_ARCH_AOT_SUPPORTED 1
+#define MONO_ARCH_LLVM_SUPPORTED 1
+#define MONO_ARCH_GSHAREDVT_SUPPORTED 1
+#define MONO_ARCH_HAVE_FULL_AOT_TRAMPOLINES 1
+
+#ifdef ENABLE_NETCORE
+#define MONO_ARCH_SIMD_INTRINSICS 1
+#endif
+
 #define MONO_ARCH_INTERPRETER_SUPPORTED 1
 #define MONO_ARCH_HAS_REGISTER_ICALL 1
 #define MONO_ARCH_HAVE_PATCH_CODE_NEW 1
 #define MONO_ARCH_HAVE_SDB_TRAMPOLINES 1
+#define MONO_ARCH_LLVM_TARGET_LAYOUT "e-m:e-p:32:32-i64:64-n32:64-S128"
+#define MONO_ARCH_LLVM_TARGET_TRIPLE "wasm32-unknown-emscripten"
 
 void mono_wasm_debugger_init (void);
 
-void mono_wasm_enable_debugging (void);
+// sdks/wasm/driver.c is C and uses this
+G_EXTERN_C void mono_wasm_enable_debugging (void);
+
 void mono_wasm_breakpoint_hit (void);
 void mono_wasm_set_timeout (int timeout, int id);
 
-void mono_sdb_single_step_trampoline (void);
 void mono_wasm_single_step_hit (void);
 void mono_wasm_breakpoint_hit (void);
 

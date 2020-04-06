@@ -41,6 +41,7 @@ typedef enum {
 	LLVM_ATTR_NO_UNWIND,
 	LLVM_ATTR_NO_INLINE,
 	LLVM_ATTR_OPTIMIZE_FOR_SIZE,
+	LLVM_ATTR_OPTIMIZE_NONE,
 	LLVM_ATTR_IN_REG,
 	LLVM_ATTR_STRUCT_RET,
 	LLVM_ATTR_NO_ALIAS,
@@ -50,6 +51,9 @@ typedef enum {
 
 void
 mono_llvm_dump_value (LLVMValueRef value);
+
+void
+mono_llvm_dump_module (LLVMModuleRef module);
 
 LLVMValueRef
 mono_llvm_build_alloca (LLVMBuilderRef builder, LLVMTypeRef Ty, 
@@ -88,6 +92,15 @@ mono_llvm_replace_uses_of (LLVMValueRef var, LLVMValueRef v);
 LLVMValueRef
 mono_llvm_build_cmpxchg (LLVMBuilderRef builder, LLVMValueRef addr, LLVMValueRef comparand, LLVMValueRef value);
 
+LLVMValueRef
+mono_llvm_build_weighted_branch (LLVMBuilderRef builder, LLVMValueRef cond, LLVMBasicBlockRef t, LLVMBasicBlockRef f, uint32_t t_weight, uint32_t f_weight);
+
+void
+mono_llvm_add_string_metadata (LLVMValueRef insref, const char* label, const char* text);
+
+void
+mono_llvm_set_implicit_branch (LLVMBuilderRef builder, LLVMValueRef branch);
+
 void
 mono_llvm_set_must_tailcall (LLVMValueRef call_ins);
 
@@ -98,13 +111,28 @@ void
 mono_llvm_set_is_constant (LLVMValueRef global_var);
 
 void
-mono_llvm_set_preserveall_cc (LLVMValueRef func);
+mono_llvm_set_call_nonnull_arg (LLVMValueRef calli, int argNo);
 
 void
-mono_llvm_set_call_preserveall_cc (LLVMValueRef call);
+mono_llvm_set_call_nonnull_ret (LLVMValueRef calli);
+
+void
+mono_llvm_set_func_nonnull_arg (LLVMValueRef func, int argNo);
+
+GSList *
+mono_llvm_calls_using (LLVMValueRef wrapped_local);
+
+LLVMValueRef *
+mono_llvm_call_args (LLVMValueRef calli);
+
+gboolean
+mono_llvm_is_nonnull (LLVMValueRef val);
 
 void
 mono_llvm_set_call_notailcall (LLVMValueRef call);
+
+void
+mono_llvm_set_call_noalias_ret (LLVMValueRef wrapped_calli);
 
 void
 mono_llvm_add_func_attr (LLVMValueRef func, AttrKind kind);
@@ -116,16 +144,15 @@ void
 mono_llvm_add_instr_attr (LLVMValueRef val, int index, AttrKind kind);
 
 #if defined(ENABLE_LLVM) && defined(HAVE_UNWIND_H)
-_Unwind_Reason_Code 
-mono_debug_personality (int a, _Unwind_Action b,
+G_EXTERN_C _Unwind_Reason_Code mono_debug_personality (int a, _Unwind_Action b,
 	uint64_t c, struct _Unwind_Exception *d, struct _Unwind_Context *e);
 #endif
 
-void
-default_mono_llvm_unhandled_exception (void);
-
 void*
 mono_llvm_create_di_builder (LLVMModuleRef module);
+
+gboolean
+mono_llvm_can_be_gep (LLVMValueRef base, LLVMValueRef* actual_base, LLVMValueRef* actual_offset);
 
 void*
 mono_llvm_di_create_function (void *di_builder, void *cu, LLVMValueRef func, const char *name, const char *mangled_name, const char *dir, const char *file, int line);
@@ -143,7 +170,24 @@ void
 mono_llvm_di_builder_finalize (void *di_builder);
 
 void
+mono_llvm_set_fast_math (LLVMBuilderRef builder);
+
+void
 mono_llvm_di_set_location (LLVMBuilderRef builder, void *loc_md);
+
+LLVMValueRef
+mono_llvm_get_or_insert_gc_safepoint_poll (LLVMModuleRef module);
+
+gboolean
+mono_llvm_remove_gc_safepoint_poll (LLVMModuleRef module);
+
+typedef struct {
+	const char* alias;
+	guint32 flag;
+} CpuFeatureAliasFlag;
+
+int
+mono_llvm_check_cpu_features (const CpuFeatureAliasFlag *features, int length);
 
 G_END_DECLS
 

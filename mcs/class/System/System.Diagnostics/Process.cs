@@ -42,6 +42,7 @@ using System.Runtime.InteropServices;
 using System.Runtime.Remoting.Messaging;
 using System.Security.Permissions;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.Security;
 using System.Threading;
 using Microsoft.Win32;
@@ -127,18 +128,27 @@ namespace System.Diagnostics
 			}
 		}
 
+		private static void AppendArguments (StringBuilder stringBuilder, Collection<string> argumentList)
+		{
+			if (argumentList.Count > 0) {
+				foreach (string argument in argumentList) {
+					PasteArguments.AppendArgument (stringBuilder, argument);
+				}
+			}
+		}
+
 		/* Returns the list of process modules.  The main module is
 		 * element 0.
 		 */
 		[MethodImplAttribute(MethodImplOptions.InternalCall)]
-		private extern ProcessModule[] GetModules_internal(IntPtr handle);
+		private extern ProcessModule[] GetModules_icall (IntPtr handle);
 
 		ProcessModule[] GetModules_internal (SafeProcessHandle handle)
 		{
 			bool release = false;
 			try {
 				handle.DangerousAddRef (ref release);
-				return GetModules_internal (handle.DangerousGetHandle ());
+				return GetModules_icall (handle.DangerousGetHandle ());
 			} finally {
 				if (release)
 					handle.DangerousRelease ();
@@ -313,14 +323,14 @@ namespace System.Diagnostics
 		}
 
 		[MethodImplAttribute(MethodImplOptions.InternalCall)]
-		private extern static string ProcessName_internal(IntPtr handle);
+		private extern static string ProcessName_icall (IntPtr handle);
 
 		static string ProcessName_internal(SafeProcessHandle handle)
 		{
 			bool release = false;
 			try {
 				handle.DangerousAddRef (ref release);
-				return ProcessName_internal (handle.DangerousGetHandle ());
+				return ProcessName_icall (handle.DangerousGetHandle ());
 			} finally {
 				if (release)
 					handle.DangerousRelease ();
@@ -782,9 +792,9 @@ namespace System.Diagnostics
 				MonoIO.Close (stdin_read, out error);
 
 #if MOBILE
-				var stdinEncoding = Encoding.Default;
+				var stdinEncoding = startInfo.StandardInputEncoding ?? Encoding.Default;
 #else
-				var stdinEncoding = Console.InputEncoding;
+				var stdinEncoding = startInfo.StandardInputEncoding ?? Console.InputEncoding;
 #endif
 				standardInput = new StreamWriter (new FileStream (stdin_write, FileAccess.Write, true, 8192), stdinEncoding) {
 					AutoFlush = true

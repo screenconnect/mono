@@ -36,7 +36,6 @@
 using System.Collections;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
-
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Runtime.ConstrainedExecution;
@@ -106,11 +105,12 @@ namespace System
 		internal bool InternalArray__ICollection_Contains<T> (T item)
 		{
 			if (this.Rank > 1)
-				throw new RankException (Locale.GetText ("Only single dimension arrays are supported."));
+				throw new RankException ("Only single dimension arrays are supported.");
 
 			int length = this.Length;
 			for (int i = 0; i < length; i++) {
 				T value;
+				// Do not change this to call GetGenericValue_icall directly, due to special casing in the runtime.
 				GetGenericValueImpl (i, out value);
 				if (item == null){
 					if (value == null) {
@@ -139,6 +139,7 @@ namespace System
 				throw new ArgumentOutOfRangeException ("index");
 
 			T value;
+			// Do not change this to call GetGenericValue_icall directly, due to special casing in the runtime.
 			GetGenericValueImpl (index, out value);
 			return value;
 		}
@@ -161,11 +162,12 @@ namespace System
 		internal int InternalArray__IndexOf<T> (T item)
 		{
 			if (this.Rank > 1)
-				throw new RankException (Locale.GetText ("Only single dimension arrays are supported."));
+				throw new RankException ("Only single dimension arrays are supported.");
 
 			int length = this.Length;
 			for (int i = 0; i < length; i++) {
 				T value;
+				// Do not change this to call GetGenericValue_icall directly, due to special casing in the runtime.
 				GetGenericValueImpl (i, out value);
 				if (item == null){
 					if (value == null)
@@ -191,6 +193,7 @@ namespace System
 				throw new ArgumentOutOfRangeException ("index");
 
 			T value;
+			// Do not change this to call GetGenericValue_icall directly, due to special casing in the runtime.
 			GetGenericValueImpl (index, out value);
 			return value;
 		}
@@ -205,16 +208,31 @@ namespace System
 				oarray [index] = (object)item;
 				return;
 			}
+			// Do not change this to call SetGenericValue_icall directly, due to special casing in the runtime.
 			SetGenericValueImpl (index, ref item);
 		}
 
 		// CAUTION! No bounds checking!
 		[MethodImplAttribute (MethodImplOptions.InternalCall)]
-		internal extern void GetGenericValueImpl<T> (int pos, out T value);
+		extern static void GetGenericValue_icall<T> (ref Array self, int pos, out T value);
 
 		// CAUTION! No bounds checking!
 		[MethodImplAttribute (MethodImplOptions.InternalCall)]
-		internal extern void SetGenericValueImpl<T> (int pos, ref T value);
+		extern static void SetGenericValue_icall<T> (ref Array self, int pos, ref T value);
+
+		// This is a special case in the runtime.
+		internal void GetGenericValueImpl<T> (int pos, out T value)
+		{
+			var self = this;
+			GetGenericValue_icall (ref self, pos, out value);
+		}
+
+		// This is a special case in the runtime.
+		internal void SetGenericValueImpl<T> (int pos, ref T value)
+		{
+			var self = this;
+			SetGenericValue_icall (ref self, pos, ref value);
+		}
 
 		internal struct InternalEnumerator<T> : IEnumerator<T>
 		{
@@ -364,8 +382,7 @@ namespace System
 
 			var lb  = GetLowerBound (0);
 			if (index < lb || index > GetUpperBound (0))
-				throw new IndexOutOfRangeException (Locale.GetText (
-					"Index has to be between upper and lower bound of the array."));
+				throw new IndexOutOfRangeException ("Index has to be between upper and lower bound of the array.");
 
 			if (GetType ().GetElementType ().IsPointer)
 				throw new NotSupportedException ("Type is not supported.");
@@ -392,8 +409,7 @@ namespace System
 
 			var lb  = GetLowerBound (0);
 			if (index < lb || index > GetUpperBound (0))
-				throw new IndexOutOfRangeException (Locale.GetText (
-					"Index has to be >= lower bound and <= upper bound of the array."));
+				throw new IndexOutOfRangeException ("Index has to be >= lower bound and <= upper bound of the array.");
 
 			if (GetType ().GetElementType ().IsPointer)
 				throw new NotSupportedException ("Type is not supported.");
@@ -490,18 +506,16 @@ namespace System
 				throw new NotSupportedException ("Array type can not be an open generic type");
 
 			if (lengths.Length < 1)
-				throw new ArgumentException (Locale.GetText ("Arrays must contain >= 1 elements."));
+				throw new ArgumentException ("Arrays must contain >= 1 elements.");
 
 			if (lengths.Length != lowerBounds.Length)
-				throw new ArgumentException (Locale.GetText ("Arrays must be of same size."));
+				throw new ArgumentException ("Arrays must be of same size.");
 
 			for (int j = 0; j < lowerBounds.Length; j ++) {
 				if (lengths [j] < 0)
-					throw new ArgumentOutOfRangeException ("lengths", Locale.GetText (
-						"Each value has to be >= 0."));
+					throw new ArgumentOutOfRangeException ("lengths", "Each value has to be >= 0.");
 				if ((long)lowerBounds [j] + (long)lengths [j] > (long)Int32.MaxValue)
-					throw new ArgumentOutOfRangeException ("lengths", Locale.GetText (
-						"Length + bound must not exceed Int32.MaxValue."));
+					throw new ArgumentOutOfRangeException ("lengths", "Length + bound must not exceed Int32.MaxValue.");
 			}
 
 			if (lengths.Length > 255)
@@ -558,19 +572,16 @@ namespace System
 				throw new ArgumentNullException ("destinationArray");
 
 			if (length < 0)
-				throw new ArgumentOutOfRangeException ("length", Locale.GetText (
-					"Value has to be >= 0."));;
+				throw new ArgumentOutOfRangeException ("length", "Value has to be >= 0.");
 
 			if (sourceArray.Rank != destinationArray.Rank)
 				throw new RankException(SR.Rank_MultiDimNotSupported);
 
 			if (sourceIndex < 0)
-				throw new ArgumentOutOfRangeException ("sourceIndex", Locale.GetText (
-					"Value has to be >= 0."));;
+				throw new ArgumentOutOfRangeException ("sourceIndex", "Value has to be >= 0.");
 
 			if (destinationIndex < 0)
-				throw new ArgumentOutOfRangeException ("destinationIndex", Locale.GetText (
-					"Value has to be >= 0."));;
+				throw new ArgumentOutOfRangeException ("destinationIndex", "Value has to be >= 0.");
 
 			if (FastCopy (sourceArray, sourceIndex, destinationArray, destinationIndex, length))
 				return;
@@ -670,12 +681,20 @@ namespace System
 
 		static int IndexOfImpl<T>(T[] array, T value, int startIndex, int count)
 		{
+#if NETCORE
+			throw new NotImplementedException ();
+#else
 			return EqualityComparer<T>.Default.IndexOf (array, value, startIndex, count);
+#endif
 		}
 
 		static int LastIndexOfImpl<T>(T[] array, T value, int startIndex, int count)
 		{
+#if NETCORE
+			throw new NotImplementedException ();
+#else
 			return EqualityComparer<T>.Default.LastIndexOf (array, value, startIndex, count);
+#endif
 		}
 
 		static void SortImpl (Array keys, Array items, int index, int length, IComparer comparer)

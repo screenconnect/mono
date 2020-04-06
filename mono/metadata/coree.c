@@ -20,6 +20,7 @@
 #include "cil-coff.h"
 #include "metadata-internals.h"
 #include "image.h"
+#include "image-internals.h"
 #include "assembly-internals.h"
 #include "domain-internals.h"
 #include "appdomain.h"
@@ -79,6 +80,7 @@ BOOL STDMETHODCALLTYPE _CorDllMain(HINSTANCE hInst, DWORD dwReason, LPVOID lpRes
 	MonoImage* image;
 	gchar* file_name;
 	gchar* error;
+	MonoAssemblyLoadContext *alc = mono_domain_default_alc (mono_get_root_domain ());
 
 	switch (dwReason)
 	{
@@ -88,7 +90,7 @@ BOOL STDMETHODCALLTYPE _CorDllMain(HINSTANCE hInst, DWORD dwReason, LPVOID lpRes
 		file_name = mono_get_module_file_name (hInst);
 
 		if (mono_get_root_domain ()) {
-			image = mono_image_open_from_module_handle (hInst, mono_path_resolve_symlinks (file_name), TRUE, NULL);
+			image = mono_image_open_from_module_handle (alc, hInst, mono_path_resolve_symlinks (file_name), TRUE, NULL);
 		} else {
 			init_from_coree = TRUE;
 			mono_runtime_load (file_name, NULL);
@@ -96,13 +98,13 @@ BOOL STDMETHODCALLTYPE _CorDllMain(HINSTANCE hInst, DWORD dwReason, LPVOID lpRes
 			if (error) {
 				g_free (error);
 				g_free (file_name);
-				mono_runtime_quit ();
+				mono_runtime_quit_internal ();
 				return FALSE;
 			}
 
 			image = mono_image_open (file_name, NULL);
 			if (image) {
-				image->has_entry_point = TRUE;
+				image->storage->has_entry_point = TRUE;
 				mono_close_exe_image ();
 				/* Decrement reference count to zero. (Image will not be closed.) */
 				mono_image_close (image);
@@ -119,8 +121,11 @@ BOOL STDMETHODCALLTYPE _CorDllMain(HINSTANCE hInst, DWORD dwReason, LPVOID lpRes
 		 * loader trampolines should be used and assembly loading should
 		 * probably be delayed until the first call to an exported function.
 		 */
-		if (image->tables [MONO_TABLE_ASSEMBLY].rows && ((MonoCLIImageInfo*) image->image_info)->cli_cli_header.ch_vtable_fixups.rva)
-			assembly = mono_assembly_open_predicate (file_name, MONO_ASMCTX_DEFAULT, NULL, NULL, NULL, NULL);
+		if (image->tables [MONO_TABLE_ASSEMBLY].rows && image->image_info->cli_cli_header.ch_vtable_fixups.rva) {
+			MonoAssemblyOpenRequest req;
+			mono_assembly_request_prepare_open (&req, MONO_ASMCTX_DEFAULT, alc);
+			assembly = mono_assembly_request_open (file_name, &req, NULL);
+		}
 
 		g_free (file_name);
 		break;
@@ -129,7 +134,7 @@ BOOL STDMETHODCALLTYPE _CorDllMain(HINSTANCE hInst, DWORD dwReason, LPVOID lpRes
 			/* The process is terminating. */
 			return TRUE;
 		file_name = mono_get_module_file_name (hInst);
-		image = mono_image_loaded (file_name);
+		image = mono_image_loaded_internal (alc, file_name, FALSE);
 		if (image)
 			mono_image_close (image);
 
@@ -167,16 +172,18 @@ __int32 STDMETHODCALLTYPE _CorExeMain(void)
 		g_free (corlib_version_error);
 		g_free (file_name);
 		MessageBox (NULL, L"Corlib not in sync with this runtime.", NULL, MB_ICONERROR);
-		mono_runtime_quit ();
+		mono_runtime_quit_internal ();
 		ExitProcess (1);
 	}
 
-	assembly = mono_assembly_open_predicate (file_name, MONO_ASMCTX_DEFAULT, NULL, NULL, NULL, NULL);
+	MonoAssemblyOpenRequest req;
+	mono_assembly_request_prepare_open (&req, MONO_ASMCTX_DEFAULT, mono_domain_default_alc (mono_get_root_domain ()));
+	assembly = mono_assembly_request_open (file_name, &req, NULL);
 	mono_close_exe_image ();
 	if (!assembly) {
 		g_free (file_name);
 		MessageBox (NULL, L"Cannot open assembly.", NULL, MB_ICONERROR);
-		mono_runtime_quit ();
+		mono_runtime_quit_internal ();
 		ExitProcess (1);
 	}
 
@@ -185,7 +192,7 @@ __int32 STDMETHODCALLTYPE _CorExeMain(void)
 	if (!entry) {
 		g_free (file_name);
 		MessageBox (NULL, L"Assembly doesn't have an entry point.", NULL, MB_ICONERROR);
-		mono_runtime_quit ();
+		mono_runtime_quit_internal ();
 		ExitProcess (1);
 	}
 
@@ -194,7 +201,7 @@ __int32 STDMETHODCALLTYPE _CorExeMain(void)
 		g_free (file_name);
 		mono_error_cleanup (error); /* FIXME don't swallow the error */
 		MessageBox (NULL, L"The entry point method could not be loaded.", NULL, MB_ICONERROR);
-		mono_runtime_quit ();
+		mono_runtime_quit_internal ();
 		ExitProcess (1);
 	}
 
@@ -207,9 +214,9 @@ __int32 STDMETHODCALLTYPE _CorExeMain(void)
 
 	mono_runtime_run_main_checked (method, argc, argv, error);
 	mono_error_raise_exception_deprecated (error); /* OK, triggers unhandled exn handler */
-	mono_thread_manage ();
+	mono_thread_manage_internal ();
 
-	mono_runtime_quit ();
+	mono_runtime_quit_internal ();
 
 	/* return does not terminate the process. */
 	ExitProcess (mono_environment_exitcode_get ());
@@ -224,7 +231,7 @@ void STDMETHODCALLTYPE CorExitProcess(int exitCode)
 	if (mono_get_root_domain () && !mono_runtime_is_shutting_down ()) {
 		mono_runtime_set_shutting_down ();
 		mono_thread_suspend_all_other_threads ();
-		mono_runtime_quit ();
+		mono_runtime_quit_internal ();
 	}
 #endif
 	ExitProcess (exitCode);
@@ -511,13 +518,13 @@ typedef struct _EXPORT_FIXUP
 
 /* Has to be binary ordered. */
 static const EXPORT_FIXUP ExportFixups[] = {
-	{"CorBindToRuntime", {&CorBindToRuntime}},
-	{"CorBindToRuntimeEx", {&CorBindToRuntimeEx}},
-	{"CorExitProcess", {&CorExitProcess}},
-	{"_CorDllMain", {&_CorDllMain}},
-	{"_CorExeMain", {&_CorExeMain}},
-	{"_CorImageUnloading", {&_CorImageUnloading}},
-	{"_CorValidateImage", {&_CorValidateImage}},
+	{"CorBindToRuntime", {(PVOID)&CorBindToRuntime}},
+	{"CorBindToRuntimeEx", {(PVOID)&CorBindToRuntimeEx}},
+	{"CorExitProcess", {(PVOID)&CorExitProcess}},
+	{"_CorDllMain", {(PVOID)&_CorDllMain}},
+	{"_CorExeMain", {(PVOID)&_CorExeMain}},
+	{"_CorImageUnloading", {(PVOID)&_CorImageUnloading}},
+	{"_CorValidateImage", {(PVOID)&_CorValidateImage}},
 	{NULL, {NULL}}
 };
 
@@ -827,7 +834,7 @@ STDAPI MonoFixupExe(HMODULE ModuleHandle)
 					else
 					{
 						IMAGE_IMPORT_BY_NAME* ImportByName = (IMAGE_IMPORT_BY_NAME*)((DWORD_PTR)DosHeader + ImportThunkData->u1.AddressOfData);
-						ProcAddress = (DWORD_PTR)GetProcAddress(ImportModuleHandle, ImportByName->Name);
+						ProcAddress = (DWORD_PTR)GetProcAddress(ImportModuleHandle, (PCSTR)ImportByName->Name);
 					}
 					if (ProcAddress == 0)
 						return E_FAIL;
@@ -893,7 +900,7 @@ mono_coree_set_act_ctx (const char* file_name)
 	act_ctx.dwFlags = ACTCTX_FLAG_SET_PROCESS_DEFAULT | ACTCTX_FLAG_ASSEMBLY_DIRECTORY_VALID | ACTCTX_FLAG_RESOURCE_NAME_VALID | ACTCTX_FLAG_APPLICATION_NAME_VALID;
 	act_ctx.lpSource = full_path_utf16;
 	act_ctx.lpAssemblyDirectory = dir_name_utf16;
-	act_ctx.lpResourceName = MAKEINTRESOURCE (CREATEPROCESS_MANIFEST_RESOURCE_ID);
+	act_ctx.lpResourceName = CREATEPROCESS_MANIFEST_RESOURCE_ID;
 	act_ctx.lpApplicationName = base_name_utf16;
 
 	handle = CreateActCtx_proc (&act_ctx);
@@ -922,6 +929,7 @@ mono_load_coree (const char* exe_file_name)
 	if (coree_module_handle)
 		return;
 
+	// No GC safe transition because this is called early in driver.c
 	if (!init_from_coree && exe_file_name)
 		mono_coree_set_act_ctx (exe_file_name);
 
@@ -948,8 +956,14 @@ mono_load_coree (const char* exe_file_name)
 void
 mono_fixup_exe_image (MonoImage* image)
 {
-	if (!init_from_coree && image && image->is_module_handle)
+	if (!init_from_coree && image && m_image_is_module_handle (image))
 		MonoFixupExe ((HMODULE) image->raw_data);
 }
+
+#else
+
+#include <mono/utils/mono-compiler.h>
+
+MONO_EMPTY_SOURCE_FILE (coree);
 
 #endif /* HOST_WIN32 */

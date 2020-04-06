@@ -36,7 +36,7 @@
 #define MONO_ARCH_IS_OP_MEMBASE(opcode) FALSE
 #endif
 
-static inline MonoBitSet* 
+static MonoBitSet*
 mono_bitset_mp_new_noinit (MonoMemPool *mp,  guint32 max_size)
 {
 	int size = mono_bitset_alloc_size (max_size, 0);
@@ -370,7 +370,7 @@ mono_strength_reduction_ins (MonoCompile *cfg, MonoInst *ins, const char **spec)
 	}
 	case OP_IDIV_UN_IMM:
 	case OP_IDIV_IMM: {
-		if (!COMPILE_LLVM (cfg))
+		if ((!COMPILE_LLVM (cfg)) && (!cfg->backend->optimized_div))
 			allocated_vregs = mono_strength_reduction_division (cfg, ins);
 		break;
 	}
@@ -383,10 +383,8 @@ mono_strength_reduction_ins (MonoCompile *cfg, MonoInst *ins, const char **spec)
 			ins->opcode = OP_ICONST;
 			MONO_INST_NULLIFY_SREGS (ins);
 			ins->inst_c0 = 0;
-#if __s390__
-		}
-#else
-		} else if ((ins->inst_imm > 0) && (ins->inst_imm < (1LL << 32)) && (power != -1)) {
+		} else if ((ins->inst_imm > 0) && (ins->inst_imm < (1LL << 32)) && 
+			   (power != -1) && (!cfg->backend->optimized_div)) {
 			gboolean is_long = ins->opcode == OP_LREM_IMM;
 			int compensator_reg = alloc_ireg (cfg);
 			int intermediate_reg;
@@ -411,7 +409,6 @@ mono_strength_reduction_ins (MonoCompile *cfg, MonoInst *ins, const char **spec)
 
 			allocated_vregs = TRUE;
 		}
-#endif
 		break;
 	}
 #if SIZEOF_REGISTER == 4
@@ -680,7 +677,7 @@ mono_local_cprop (MonoCompile *cfg)
 						mono_inst_set_src_registers (ins, sregs);
 
 						if ((opcode2 == OP_VOIDCALL) || (opcode2 == OP_CALL) || (opcode2 == OP_LCALL) || (opcode2 == OP_FCALL))
-							((MonoCallInst*)ins)->fptr = (gpointer)ins->inst_imm;
+							((MonoCallInst*)ins)->fptr = (gpointer)(uintptr_t)ins->inst_imm;
 
 						/* Allow further iterations */
 						srcindex = -1;
@@ -783,6 +780,12 @@ mono_local_cprop (MonoCompile *cfg)
 				bb_opt->in_count = bb_opt->out_count = 0;
 				cfg->cbb = bb_opt;
 
+				if (!saved_prev) {
+					/* first instruction of basic block got replaced, so create
+					 * dummy inst that points to start of basic block */
+					MONO_INST_NEW (cfg, saved_prev, OP_NOP);
+					saved_prev = bb->code;
+				}
 				/* ins is hanging, continue scanning the emitted code */
 				ins = saved_prev;
 				continue;
@@ -812,7 +815,7 @@ mono_local_cprop (MonoCompile *cfg)
 	}
 }
 
-static inline gboolean
+static gboolean
 reg_is_softreg_no_fpstack (int reg, const char spec)
 {
 	return (spec == 'i' && reg >= MONO_MAX_IREGS)
@@ -823,7 +826,7 @@ reg_is_softreg_no_fpstack (int reg, const char spec)
 		|| (spec == 'v');
 }
 		
-static inline gboolean
+static gboolean
 reg_is_softreg (int reg, const char spec)
 {
 	return (spec == 'i' && reg >= MONO_MAX_IREGS)
@@ -834,7 +837,7 @@ reg_is_softreg (int reg, const char spec)
 		|| (spec == 'v');
 }
 
-static inline gboolean
+static gboolean
 mono_is_simd_accessor (MonoInst *ins)
 {
 	switch (ins->opcode) {

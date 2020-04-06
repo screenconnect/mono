@@ -22,9 +22,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
-#ifdef HAVE_SIGNAL_H
 #include <signal.h>
-#endif
 #include <sys/time.h>
 #include <fcntl.h>
 #ifdef HAVE_SYS_PARAM_H
@@ -47,6 +45,19 @@
 #include <utime.h>
 #endif
 
+#if defined (HAVE_FORK) && defined (HAVE_EXECVE)
+// For close_my_fds
+#if defined (_AIX)
+#include <procinfo.h>
+#elif defined (__FreeBSD__)
+#include <sys/sysctl.h>
+#include <sys/user.h>
+#include <libutil.h>
+#elif defined(__linux__)
+#include <dirent.h>
+#endif
+#endif
+
 #include <mono/metadata/object-internals.h>
 #include <mono/metadata/w32process.h>
 #include <mono/metadata/w32process-internals.h>
@@ -62,6 +73,7 @@
 #include <mono/metadata/w32file.h>
 #include <mono/utils/mono-membar.h>
 #include <mono/utils/mono-logger-internals.h>
+#include <mono/utils/strenc-internals.h>
 #include <mono/utils/strenc.h>
 #include <mono/utils/mono-proclib.h>
 #include <mono/utils/mono-path.h>
@@ -72,6 +84,13 @@
 #include <mono/utils/strenc.h>
 #include <mono/utils/mono-io-portability.h>
 #include <mono/utils/w32api.h>
+#include <mono/utils/mono-errno.h>
+#include <mono/utils/mono-error-internals.h>
+#include <mono/utils/mono-threads-coop.h>
+#include "object-internals.h"
+#include "icall-decl.h"
+
+#ifndef ENABLE_NETCORE
 
 #ifndef MAXPATHLEN
 #define MAXPATHLEN 242
@@ -83,6 +102,7 @@
 /* define LOGDEBUG(...) g_message(__VA_ARGS__)  */
 
 /* The process' environment strings */
+#if defined (HAVE_FORK) && defined (HAVE_EXECVE)
 #if defined(__APPLE__)
 #if defined (TARGET_OSX)
 /* Apple defines this in crt_externs.h but doesn't provide that header for 
@@ -101,6 +121,7 @@ static char *mono_environ[1] = { NULL };
 G_BEGIN_DECLS
 extern char **environ;
 G_END_DECLS
+#endif
 #endif
 
 typedef enum {
@@ -710,7 +731,7 @@ get_process_foreach_callback (MonoW32Handle *handle_data, gpointer user_data)
 }
 
 HANDLE
-ves_icall_System_Diagnostics_Process_GetProcess_internal (guint32 pid)
+ves_icall_System_Diagnostics_Process_GetProcess_internal (guint32 pid, MonoError *error)
 {
 	GetProcessForeachData foreach_data;
 	gpointer handle;
@@ -890,82 +911,77 @@ mono_w32process_try_get_modules (gpointer handle, gpointer *modules, guint32 siz
 	return TRUE;
 }
 
-guint32
-mono_w32process_module_get_filename (gpointer handle, gpointer module, gunichar2 *basename, guint32 size)
+gboolean
+mono_w32process_module_get_filename (gpointer handle, gpointer module, gunichar2 **str, guint32 *len)
 {
-	gint pid, len;
-	gsize bytes;
+	gint pid;
+	gsize bytes = 0;
 	gchar *path;
 	gunichar2 *proc_path;
 
-	size *= sizeof (gunichar2); /* adjust for unicode characters */
+	mono_trace (G_LOG_LEVEL_DEBUG, MONO_TRACE_IO_LAYER_PROCESS, "%s: Getting module file name, process handle %p module %p " G_GUINT32_FORMAT,
+	            __func__, handle, module);
 
-	if (basename == NULL || size == 0)
-		return 0;
+	if (str == NULL || len == NULL)
+		return FALSE;
+
+	*str = NULL;
+	*len = 0;
 
 	pid = mono_w32process_get_pid (handle);
+	if (pid == 0)
+		return FALSE;
 
 	path = mono_w32process_get_path (pid);
 	if (path == NULL)
-		return 0;
+		return FALSE;
 
 	proc_path = mono_unicode_from_external (path, &bytes);
-	g_free (path);
-
-	if (proc_path == NULL)
-		return 0;
-
-	len = (bytes / 2);
-
-	/* Add the terminator */
-	bytes += 2;
-
-	if (size < bytes) {
-		mono_trace (G_LOG_LEVEL_DEBUG, MONO_TRACE_IO_LAYER_PROCESS, "%s: Size %" G_GUINT32_FORMAT " smaller than needed (%zd); truncating", __func__, size, bytes);
-		memcpy (basename, proc_path, size);
-	} else {
-		mono_trace (G_LOG_LEVEL_DEBUG, MONO_TRACE_IO_LAYER_PROCESS, "%s: Size %" G_GUINT32_FORMAT " larger than needed (%zd)", __func__, size, bytes);
-		memcpy (basename, proc_path, bytes);
+	if (proc_path == NULL) {
+		g_free (path);
+		return FALSE;
 	}
 
-	g_free (proc_path);
+	*str = mono_unicode_from_external (path, &bytes);
+	*len = bytes / sizeof (gunichar2);
 
-	return len;
+	g_free (path);
+	return TRUE;
 }
 
-guint32
-mono_w32process_module_get_name (gpointer handle, gpointer module, gunichar2 *basename, guint32 size)
+gboolean
+mono_w32process_module_get_name (gpointer handle, gpointer module, gunichar2 **str, guint32 *len)
 {
 	MonoW32Handle *handle_data;
 	MonoW32HandleProcess *process_handle;
 	pid_t pid;
 	gunichar2 *procname;
 	char *procname_ext = NULL;
-	glong len;
-	gsize bytes;
+	gsize bytes = 0;
 	GSList *mods = NULL, *mods_iter;
 	MonoW32ProcessModule *found_module;
 	char *pname = NULL;
 
-	mono_trace (G_LOG_LEVEL_DEBUG, MONO_TRACE_IO_LAYER_PROCESS, "%s: Getting module base name, process handle %p module %p basename %p size %" G_GUINT32_FORMAT,
-		   __func__, handle, module, basename, size);
+	mono_trace (G_LOG_LEVEL_DEBUG, MONO_TRACE_IO_LAYER_PROCESS, "%s: Getting module base name, process handle %p module %p " G_GUINT32_FORMAT,
+		   __func__, handle, module);
 
-	size = size * sizeof (gunichar2); /* adjust for unicode characters */
+	if (str == NULL || len == NULL)
+		return FALSE;
 
-	if (basename == NULL || size == 0)
-		return 0;
+	*str = NULL;
+	*len = 0;
 
 	if (!mono_w32handle_lookup_and_ref (handle, &handle_data)) {
 		mono_trace (G_LOG_LEVEL_DEBUG, MONO_TRACE_IO_LAYER_PROCESS, "%s: unknown handle %p", __func__, handle);
 		mono_w32error_set_last (ERROR_INVALID_HANDLE);
-		return 0;
+		return FALSE;
 	}
 
 	if (handle_data->type != MONO_W32TYPE_PROCESS) {
 		mono_trace (G_LOG_LEVEL_DEBUG, MONO_TRACE_IO_LAYER_PROCESS, "%s: unknown process handle %p", __func__, handle);
 		mono_w32error_set_last (ERROR_INVALID_HANDLE);
 		mono_w32handle_unref (handle_data);
-		return 0;
+		return FALSE;
 	}
 
 	process_handle = (MonoW32HandleProcess*) handle_data->specific;
@@ -978,7 +994,7 @@ mono_w32process_module_get_name (gpointer handle, gpointer module, gunichar2 *ba
 		mono_trace (G_LOG_LEVEL_DEBUG, MONO_TRACE_IO_LAYER_PROCESS, "%s: Can't get modules %p", __func__, handle);
 		g_free (pname);
 		mono_w32handle_unref (handle_data);
-		return 0;
+		return FALSE;
 	}
 
 	/* If module != NULL compare the address.
@@ -1020,35 +1036,20 @@ mono_w32process_module_get_name (gpointer handle, gpointer module, gunichar2 *ba
 			/* bugger */
 			g_free (procname_ext);
 			mono_w32handle_unref (handle_data);
-			return 0;
+			return FALSE;
 		}
 
-		len = (bytes / 2);
+		*str = procname;
+		*len = bytes / sizeof (gunichar2);
 
-		/* Add the terminator */
-		bytes += 2;
-
-		if (size < bytes) {
-			mono_trace (G_LOG_LEVEL_DEBUG, MONO_TRACE_IO_LAYER_PROCESS, "%s: Size %" G_GUINT32_FORMAT " smaller than needed (%zd); truncating", __func__, size, bytes);
-
-			memcpy (basename, procname, size);
-		} else {
-			mono_trace (G_LOG_LEVEL_DEBUG, MONO_TRACE_IO_LAYER_PROCESS, "%s: Size %" G_GUINT32_FORMAT " larger than needed (%zd)",
-				   __func__, size, bytes);
-
-			memcpy (basename, procname, bytes);
-		}
-
-		g_free (procname);
 		g_free (procname_ext);
-
 		mono_w32handle_unref (handle_data);
-		return len;
+		return TRUE;
 	}
 
 	mono_trace (G_LOG_LEVEL_DEBUG, MONO_TRACE_IO_LAYER_PROCESS, "%s: Can't find procname_ext %p", __func__, handle);
 	mono_w32handle_unref (handle_data);
-	return 0;
+	return FALSE;
 }
 
 gboolean
@@ -1117,19 +1118,6 @@ mono_w32process_module_get_information (gpointer handle, gpointer module, MODULE
 	return ret;
 }
 
-static void
-switch_dir_separators (char *path)
-{
-	size_t i, pathLength = strlen(path);
-	
-	/* Turn all the slashes round the right way, except for \' */
-	/* There are probably other characters that need to be excluded as well. */
-	for (i = 0; i < pathLength; i++) {
-		if (path[i] == '\\' && i < pathLength - 1 && path[i+1] != '\'' )
-			path[i] = '/';
-	}
-}
-
 #if HAVE_SIGACTION
 
 MONO_SIGNAL_HANDLER_FUNC (static, mono_sigchld_signal_handler, (int _dummy, siginfo_t *info, void *context))
@@ -1142,7 +1130,7 @@ MONO_SIGNAL_HANDLER_FUNC (static, mono_sigchld_signal_handler, (int _dummy, sigi
 
 	mono_gc_finalize_notify ();
 
-	errno = old_errno;
+	mono_set_errno (old_errno);
 }
 
 static void
@@ -1198,6 +1186,20 @@ mono_w32process_signal_finished (void)
 	mono_coop_mutex_unlock (&processes_mutex);
 }
 
+#if defined (HAVE_FORK) && defined (HAVE_EXECVE)
+static void
+switch_dir_separators (char *path)
+{
+	size_t i, pathLength = strlen (path);
+
+	/* Turn all the slashes round the right way, except for \' */
+	/* There are probably other characters that need to be excluded as well. */
+	for (i = 0; i < pathLength; i++) {
+		if (path[i] == '\\' && i < pathLength - 1 && path[i + 1] != '\'')
+			path[i] = '/';
+	}
+}
+
 static gboolean
 is_readable_or_executable (const char *prog)
 {
@@ -1248,7 +1250,7 @@ is_managed_binary (const char *filename)
 	 * probably wouldn't be able to open it anyway.
 	 */
 	if (file < 0) {
-		errno = original_errno;
+		mono_set_errno (original_errno);
 		return FALSE;
 	}
 
@@ -1351,9 +1353,129 @@ is_managed_binary (const char *filename)
 
 leave:
 	close (file);
-	errno = original_errno;
+	mono_set_errno (original_errno);
 	return managed;
 }
+
+/**
+ * Gets the biggest numbered file descriptor for the current process; failing
+ * that, the system's file descriptor limit. This is called by the fork child
+ * in close_my_fds.
+ */
+static guint32
+max_fd_count (void)
+{
+#if defined (_AIX)
+	struct procentry64 pe;
+	pid_t p;
+	p = getpid ();
+	if (getprocs64 (&pe, sizeof (pe), NULL, 0, &p, 1) != -1) {
+		mono_trace (G_LOG_LEVEL_DEBUG, MONO_TRACE_IO_LAYER_PROCESS,
+			   "%s: maximum returned fd in child is %u",
+			   __func__, pe.pi_maxofile);
+		return pe.pi_maxofile; // biggest + 1
+	}
+#endif
+	// fallback to user/system limit if unsupported/error
+	return eg_getdtablesize ();
+}
+
+/**
+ * Closes all of the process' opened file descriptors, applying a strategy
+ * appropriate for the target system. This is called by the fork child in
+ * process_create.
+ */
+static void
+close_my_fds (void)
+{
+// TODO: Other platforms.
+//       * On macOS, use proc_pidinfo + PROC_PIDLISTFDS? See:
+//         http://blog.palominolabs.com/2012/06/19/getting-the-files-being-used-by-a-process-on-mac-os-x/
+//         (I have no idea how this plays out on i/watch/tvOS.)
+//       * On the other BSDs, there's likely a sysctl for this.
+//       * On Solaris, there exists posix_spawn_file_actions_addclosefrom_np,
+//         but that assumes we're using posix_spawn; we aren't, as we do some
+//         complex stuff between fork and exec. There's likely a way to get
+//         the FD list/count though (maybe look at addclosefrom source in
+//         illumos?) or just walk /proc/pid/fd like Linux?
+#if defined (__linux__)
+	/* Walk the file descriptors in /proc/self/fd/. Linux has no other API,
+	 * as far as I'm aware. Opening a directory won't create an FD. */
+	struct dirent *dp;
+	DIR *d;
+	int fd;
+	d = opendir ("/proc/self/fd/");
+	if (d) {
+		while ((dp = readdir (d)) != NULL) {
+			if (dp->d_name [0] == '.')
+				continue;
+			fd = atoi (dp->d_name);
+			if (fd > 2)
+				close (fd);
+		}
+		closedir (d);
+		return;
+	} else {
+		mono_trace (G_LOG_LEVEL_DEBUG, MONO_TRACE_IO_LAYER_PROCESS,
+			   "%s: opening fd dir failed, using fallback",
+			   __func__);
+	}
+#elif defined (__FreeBSD__)
+	/* FreeBSD lets us get a list of FDs. There's a MIB to access them
+	 * directly, but it uses a lot of nasty variable length structures. The
+	 * system library libutil provides a nicer way to get a fixed length
+	 * version instead. */
+	struct kinfo_file *kif;
+	int count, i;
+	/* this is malloced but we won't need to free once we exec/exit */
+	kif = kinfo_getfile (getpid (), &count);
+	if (kif) {
+		for (i = 0; i < count; i++) {
+			/* negative FDs look to be used by the OS */
+			if (kif [i].kf_fd > 2) /* no neg + no stdio */
+				close (kif [i].kf_fd);
+		}
+		return;
+	} else {
+		mono_trace (G_LOG_LEVEL_DEBUG, MONO_TRACE_IO_LAYER_PROCESS,
+			   "%s: kinfo_getfile failed, using fallback",
+			   __func__);
+	}
+#elif defined (_AIX)
+	struct procentry64 pe;
+	/* this array struct is 1 MB, we're NOT putting it on the stack.
+	 * likewise no need to free; getprocs will fail if we use the smalller
+	 * versions if we have a lot of FDs (is it worth it?)
+	 */
+	struct fdsinfo_100K *fds;
+	pid_t p;
+	p = getpid ();
+	fds = (struct fdsinfo_100K *) g_malloc0 (sizeof (struct fdsinfo_100K));
+	if (!fds) {
+		mono_trace (G_LOG_LEVEL_DEBUG, MONO_TRACE_IO_LAYER_PROCESS,
+			   "%s: fdsinfo alloc failed, using fallback",
+			   __func__);
+		goto fallback;
+	}
+
+	if (getprocs64 (&pe, sizeof (pe), fds, sizeof (struct fdsinfo_100K), &p, 1) != -1) {
+		for (int i = 3; i < pe.pi_maxofile; i++) {
+			if (fds->pi_ufd [i].fp != 0)
+				close (fds->pi_ufd [i].fp);
+		}
+		return;
+	} else {
+		mono_trace (G_LOG_LEVEL_DEBUG, MONO_TRACE_IO_LAYER_PROCESS,
+			   "%s: getprocs64 failed, using fallback",
+			   __func__);
+	}
+fallback:
+#endif
+	/* Fallback: Close FDs blindly, according to an FD limit */
+	for (guint32 i = max_fd_count () - 1; i > 2; i--)
+		close (i);
+}
+#endif
 
 static gboolean
 process_create (const gunichar2 *appname, const gunichar2 *cmdline,
@@ -1371,6 +1493,7 @@ process_create (const gunichar2 *appname, const gunichar2 *cmdline,
 	int startup_pipe [2] = {-1, -1};
 	int dummy;
 	Process *process;
+	ERROR_DECL (error);
 
 #if HAVE_SIGACTION
 	mono_lazy_initialize (&process_sig_chld_once, process_add_sigchld_handler);
@@ -1403,11 +1526,12 @@ process_create (const gunichar2 *appname, const gunichar2 *cmdline,
 	 * so crap, with an API like this :-(
 	 */
 	if (appname != NULL) {
-		cmd = mono_unicode_to_external (appname);
+		cmd = mono_unicode_to_external_checked (appname, error);
 		if (cmd == NULL) {
-			mono_trace (G_LOG_LEVEL_DEBUG, MONO_TRACE_IO_LAYER_PROCESS, "%s: unicode conversion returned NULL",
-				   __func__);
+			mono_trace (G_LOG_LEVEL_DEBUG, MONO_TRACE_IO_LAYER_PROCESS, "%s: unicode conversion returned NULL; %s",
+				   __func__, mono_error_get_message (error));
 
+			mono_error_cleanup (error);
 			mono_w32error_set_last (ERROR_PATH_NOT_FOUND);
 			goto free_strings;
 		}
@@ -1416,20 +1540,22 @@ process_create (const gunichar2 *appname, const gunichar2 *cmdline,
 	}
 
 	if (cmdline != NULL) {
-		args = mono_unicode_to_external (cmdline);
+		args = mono_unicode_to_external_checked (cmdline, error);
 		if (args == NULL) {
-			mono_trace (G_LOG_LEVEL_DEBUG, MONO_TRACE_IO_LAYER_PROCESS, "%s: unicode conversion returned NULL", __func__);
+			mono_trace (G_LOG_LEVEL_DEBUG, MONO_TRACE_IO_LAYER_PROCESS, "%s: unicode conversion returned NULL; %s", __func__, mono_error_get_message (error));
 
+			mono_error_cleanup (error);
 			mono_w32error_set_last (ERROR_PATH_NOT_FOUND);
 			goto free_strings;
 		}
 	}
 
 	if (cwd != NULL) {
-		dir = mono_unicode_to_external (cwd);
+		dir = mono_unicode_to_external_checked (cwd, error);
 		if (dir == NULL) {
-			mono_trace (G_LOG_LEVEL_DEBUG, MONO_TRACE_IO_LAYER_PROCESS, "%s: unicode conversion returned NULL", __func__);
+			mono_trace (G_LOG_LEVEL_DEBUG, MONO_TRACE_IO_LAYER_PROCESS, "%s: unicode conversion returned NULL; %s", __func__, mono_error_get_message (error));
 
+			mono_error_cleanup (error);
 			mono_w32error_set_last (ERROR_PATH_NOT_FOUND);
 			goto free_strings;
 		}
@@ -1644,7 +1770,7 @@ process_create (const gunichar2 *appname, const gunichar2 *cmdline,
 		char *qprog;
 
 		qprog = g_shell_quote (prog);
-		full_prog = g_strconcat (qprog, " ", args_after_prog, NULL);
+		full_prog = g_strconcat (qprog, " ", args_after_prog, (const char*)NULL);
 		g_free (qprog);
 	} else {
 		full_prog = g_shell_quote (prog);
@@ -1689,7 +1815,7 @@ process_create (const gunichar2 *appname, const gunichar2 *cmdline,
 			MONO_HANDLE_ARRAY_GETREF (var, array, i);
 			gchandle_t gchandle = 0;
 			env_strings [i] = mono_unicode_to_external (mono_string_handle_pin_chars (var, &gchandle));
-			mono_gchandle_free (gchandle);
+			mono_gchandle_free_internal (gchandle);
 		}
 	} else {
 		gsize env_count = 0;
@@ -1736,9 +1862,8 @@ process_create (const gunichar2 *appname, const gunichar2 *cmdline,
 		dup2 (out_fd, 1);
 		dup2 (err_fd, 2);
 
-		/* Close all file descriptors */
-		for (i = eg_getdtablesize() - 1; i > 2; i--)
-			close (i);
+		/* Close this child's file handles. */
+		close_my_fds ();
 
 #ifdef DEBUG_ENABLED
 		mono_trace (G_LOG_LEVEL_DEBUG, MONO_TRACE_IO_LAYER_PROCESS, "%s: exec()ing [%s] in dir [%s]", __func__, cmd,
@@ -1864,16 +1989,20 @@ ves_icall_System_Diagnostics_Process_ShellExecuteEx_internal (MonoW32ProcessStar
 		goto done;
 	}
 
-	const gunichar2 *lpFile = coop.filename;
-	const gunichar2 *lpParameters = coop.arguments;
-	const gunichar2 *lpDirectory = coop.length.working_directory ? coop.working_directory : NULL;
+	const gunichar2 *lpFile;
+	lpFile = coop.filename;
+	const gunichar2 *lpParameters;
+	lpParameters = coop.arguments;
+	const gunichar2 *lpDirectory;
+	lpDirectory = coop.length.working_directory ? coop.working_directory : NULL;
 
 	/* Put both executable and parameters into the second argument
 	 * to process_create (), so it searches $PATH.  The conversion
 	 * into and back out of utf8 is because there is no
 	 * g_strdup_printf () equivalent for gunichar2 :-(
 	 */
-	gunichar2 *args = utf16_concat (utf16_quote, lpFile, utf16_quote, lpParameters ? utf16_space : NULL, lpParameters, (const gunichar2 *)NULL);
+	gunichar2 *args;
+	args = utf16_concat (utf16_quote, lpFile, utf16_quote, lpParameters ? utf16_space : NULL, lpParameters, (const gunichar2 *)NULL);
 	if (args == NULL) {
 		mono_w32error_set_last (ERROR_INVALID_DATA);
 		ret = FALSE;
@@ -1886,6 +2015,12 @@ ves_icall_System_Diagnostics_Process_ShellExecuteEx_internal (MonoW32ProcessStar
 		goto done;
 
 	if (!ret) {
+
+#if defined(TARGET_IOS) || defined(TARGET_ANDROID)
+		// don't try the "open" handlers on iOS/Android, they don't exist there anyway
+		goto done;
+#endif
+
 		static char *handler;
 		static gunichar2 *handler_utf16;
 
@@ -1902,6 +2037,7 @@ ves_icall_System_Diagnostics_Process_ShellExecuteEx_internal (MonoW32ProcessStar
 		 * On Linux, try: xdg-open, the FreeDesktop standard way of doing it,
 		 * if that fails, try to use gnome-open, then kfmclient
 		 */
+		MONO_ENTER_GC_SAFE;
 		handler = g_find_program_in_path ("xdg-open");
 		if (handler != NULL)
 			handler_needswait = TRUE;
@@ -1912,15 +2048,18 @@ ves_icall_System_Diagnostics_Process_ShellExecuteEx_internal (MonoW32ProcessStar
 				if (handler == NULL){
 					handler_utf16 = (gunichar2 *) -1;
 					ret = FALSE;
-					goto done;
 				} else {
 					/* kfmclient needs exec argument */
 					char *old = handler;
 					handler = g_strconcat (old, " exec",
-							       NULL);
+							       (const char*)NULL);
 					g_free (old);
 				}
 			}
+		}
+		MONO_EXIT_GC_SAFE;
+		if (ret == FALSE){
+			goto done;
 		}
 #endif
 		handler_utf16 = g_utf8_to_utf16 (handler, -1, NULL, NULL, NULL);
@@ -1951,7 +2090,8 @@ ves_icall_System_Diagnostics_Process_ShellExecuteEx_internal (MonoW32ProcessStar
 		if (handler_needswait) {
 			gint32 exitcode;
 			MonoW32HandleWaitRet waitret;
-			waitret = process_wait (process_info->process_handle, MONO_INFINITE_WAIT, NULL);
+			waitret = process_wait ((MonoW32Handle*)process_info->process_handle, MONO_INFINITE_WAIT, NULL);
+			(void)waitret;
 			mono_get_exit_code_process (process_info->process_handle, &exitcode);
 			if (exitcode != 0)
 				ret = FALSE;
@@ -2050,10 +2190,12 @@ ves_icall_System_Diagnostics_Process_CreateProcess_internal (MonoW32ProcessStart
 		goto exit;
 	}
 
-	gunichar2 *args = coop.length.arguments ? coop.arguments : NULL;
+	gunichar2 *args;
+	args = coop.length.arguments ? coop.arguments : NULL;
 
 	/* The default dir name is "".  Turn that into NULL to mean "current directory" */
-	gunichar2 *dir = coop.length.working_directory ? coop.working_directory : NULL;
+	gunichar2 *dir;
+	dir = coop.length.working_directory ? coop.working_directory : NULL;
 
 	ret = process_create (shell_path, args, dir, &startup_handles, process_info);
 
@@ -2067,33 +2209,44 @@ exit:
 }
 
 /* Returns an array of pids */
-MonoArray *
-ves_icall_System_Diagnostics_Process_GetProcesses_internal (void)
+MonoArrayHandle
+ves_icall_System_Diagnostics_Process_GetProcesses_internal (MonoError *error)
 {
-	ERROR_DECL (error);
-	MonoArray *procs;
-	gpointer *pidarray;
-	int i, count;
+	int count = 0;
+	guint32 *raw = 0;
+	gpointer *pidarray = 0;
+	MonoArrayHandle procs = NULL_HANDLE_ARRAY;
 
+	// FIXME mono_process_list should probably return array of int
+	// as all of the users of the elements truncate to that.
+
+	MONO_ENTER_GC_SAFE;
 	pidarray = mono_process_list (&count);
+	MONO_EXIT_GC_SAFE;
 	if (!pidarray) {
 		mono_error_set_not_supported (error, "This system does not support EnumProcesses");
-		mono_error_set_pending_exception (error);
-		return NULL;
+		goto exit;
 	}
-	procs = mono_array_new_checked (mono_domain_get (), mono_get_int32_class (), count, error);
-	if (mono_error_set_pending_exception (error)) {
-		g_free (pidarray);
-		return NULL;
+	procs = mono_array_new_handle (mono_domain_get (), mono_get_int32_class (), count, error);
+	if (!is_ok (error)) {
+		procs = NULL_HANDLE_ARRAY;
+		goto exit;
 	}
-	if (sizeof (guint32) == sizeof (gpointer)) {
-		memcpy (mono_array_addr (procs, guint32, 0), pidarray, count * sizeof (gint32));
-	} else {
-		for (i = 0; i < count; ++i)
-			*(mono_array_addr (procs, guint32, i)) = GPOINTER_TO_UINT (pidarray [i]);
-	}
-	g_free (pidarray);
 
+	MONO_ENTER_NO_SAFEPOINTS;
+
+	raw = mono_array_addr_internal (MONO_HANDLE_RAW (procs), guint32, 0);
+	if (sizeof (guint32) == sizeof (gpointer)) {
+		memcpy (raw, pidarray, count * sizeof (gint32));
+	} else {
+		for (int i = 0; i < count; ++i)
+			raw [i] = GPOINTER_TO_UINT (pidarray [i]);
+	}
+
+	MONO_EXIT_NO_SAFEPOINTS;
+
+exit:
+	g_free (pidarray);
 	return procs;
 }
 
@@ -2105,13 +2258,13 @@ mono_w32process_set_cli_launcher (gchar *path)
 }
 
 gpointer
-ves_icall_Microsoft_Win32_NativeMethods_GetCurrentProcess (MonoError *error)
+ves_icall_Microsoft_Win32_NativeMethods_GetCurrentProcess (void)
 {
 	return current_process;
 }
 
 MonoBoolean
-ves_icall_Microsoft_Win32_NativeMethods_GetExitCodeProcess (gpointer handle, gint32 *exitcode, MonoError *error)
+ves_icall_Microsoft_Win32_NativeMethods_GetExitCodeProcess (gpointer handle, gint32 *exitcode)
 {
 	return mono_get_exit_code_process (handle, exitcode);
 }
@@ -2160,13 +2313,13 @@ mono_get_exit_code_process (gpointer handle, gint32 *exitcode)
 }
 
 MonoBoolean
-ves_icall_Microsoft_Win32_NativeMethods_CloseProcess (gpointer handle, MonoError *error)
+ves_icall_Microsoft_Win32_NativeMethods_CloseProcess (gpointer handle)
 {
 	return mono_w32handle_close (handle);
 }
 
 MonoBoolean
-ves_icall_Microsoft_Win32_NativeMethods_TerminateProcess (gpointer handle, gint32 exitcode, MonoError *error)
+ves_icall_Microsoft_Win32_NativeMethods_TerminateProcess (gpointer handle, gint32 exitcode)
 {
 #ifdef HAVE_KILL
 	MonoW32Handle *handle_data;
@@ -2209,7 +2362,7 @@ ves_icall_Microsoft_Win32_NativeMethods_TerminateProcess (gpointer handle, gint3
 }
 
 MonoBoolean
-ves_icall_Microsoft_Win32_NativeMethods_GetProcessWorkingSetSize (gpointer handle, gsize *min, gsize *max, MonoError *error)
+ves_icall_Microsoft_Win32_NativeMethods_GetProcessWorkingSetSize (gpointer handle, gsize *min, gsize *max)
 {
 	MonoW32Handle *handle_data;
 	MonoW32HandleProcess *process_handle;
@@ -2245,7 +2398,7 @@ ves_icall_Microsoft_Win32_NativeMethods_GetProcessWorkingSetSize (gpointer handl
 }
 
 MonoBoolean
-ves_icall_Microsoft_Win32_NativeMethods_SetProcessWorkingSetSize (gpointer handle, gsize min, gsize max, MonoError *error)
+ves_icall_Microsoft_Win32_NativeMethods_SetProcessWorkingSetSize (gpointer handle, gsize min, gsize max)
 {
 	MonoW32Handle *handle_data;
 	MonoW32HandleProcess *process_handle;
@@ -2278,7 +2431,7 @@ ves_icall_Microsoft_Win32_NativeMethods_SetProcessWorkingSetSize (gpointer handl
 }
 
 gint32
-ves_icall_Microsoft_Win32_NativeMethods_GetPriorityClass (gpointer handle, MonoError *error)
+ves_icall_Microsoft_Win32_NativeMethods_GetPriorityClass (gpointer handle)
 {
 #ifdef HAVE_GETPRIORITY
 	MonoW32Handle *handle_data;
@@ -2301,7 +2454,7 @@ ves_icall_Microsoft_Win32_NativeMethods_GetPriorityClass (gpointer handle, MonoE
 
 	pid = ((MonoW32HandleProcess*) handle_data->specific)->pid;
 
-	errno = 0;
+	mono_set_errno (0);
 	res = getpriority (PRIO_PROCESS, pid);
 	if (res == -1 && errno != 0) {
 		switch (errno) {
@@ -2344,7 +2497,7 @@ ves_icall_Microsoft_Win32_NativeMethods_GetPriorityClass (gpointer handle, MonoE
 }
 
 MonoBoolean
-ves_icall_Microsoft_Win32_NativeMethods_SetPriorityClass (gpointer handle, gint32 priorityClass, MonoError *error)
+ves_icall_Microsoft_Win32_NativeMethods_SetPriorityClass (gpointer handle, gint32 priorityClass)
 {
 #ifdef HAVE_SETPRIORITY
 	MonoW32Handle *handle_data;
@@ -2423,7 +2576,7 @@ ticks_to_processtime (guint64 ticks, ProcessTime *processtime)
 }
 
 MonoBoolean
-ves_icall_Microsoft_Win32_NativeMethods_GetProcessTimes (gpointer handle, gint64 *creation_time, gint64 *exit_time, gint64 *kernel_time, gint64 *user_time, MonoError *error)
+ves_icall_Microsoft_Win32_NativeMethods_GetProcessTimes (gpointer handle, gint64 *creation_time, gint64 *exit_time, gint64 *kernel_time, gint64 *user_time)
 {
 	MonoW32Handle *handle_data;
 	MonoW32HandleProcess *process_handle;
@@ -3038,7 +3191,7 @@ big_up_string_block (gconstpointer data_ptr, version_data *block)
 		g_free (big_value);
 
 		big_value = g_convert ((gchar *)data_ptr,
-				       unicode_chars (data_ptr) * 2,
+				       unicode_chars ((const gunichar2*)data_ptr) * 2,
 				       "UTF-16BE", "UTF-16LE", NULL, NULL,
 				       NULL);
 		if (big_value == NULL) {
@@ -3046,7 +3199,7 @@ big_up_string_block (gconstpointer data_ptr, version_data *block)
 			return(NULL);
 		}
 		memcpy ((gpointer)data_ptr, big_value,
-			unicode_chars (data_ptr) * 2);
+			unicode_chars ((const gunichar2*)data_ptr) * sizeof(gunichar2));
 		g_free (big_value);
 
 		data_ptr = ((gunichar2 *)data_ptr) + block->value_len;
@@ -3184,7 +3337,7 @@ big_up (gconstpointer datablock, guint32 size)
 #endif
 
 gboolean
-mono_w32process_get_fileversion_info (gunichar2 *filename, gpointer *data)
+mono_w32process_get_fileversion_info (const gunichar2 *filename, gpointer *data)
 {
 	gpointer file_map;
 	gpointer versioninfo;
@@ -4115,3 +4268,51 @@ mono_w32process_ver_language_name (guint32 lang, gunichar2 *lang_out, guint32 la
 
 	return copy_lang (lang_out, lang_len, name);
 }
+
+#else /* ENABLE_NETCORE */
+
+void
+mono_w32process_init (void)
+{
+}
+
+void
+mono_w32process_cleanup (void)
+{
+}
+
+void
+mono_w32process_set_cli_launcher (gchar *path)
+{
+}
+
+void
+mono_w32process_signal_finished (void)
+{
+}
+
+guint32
+mono_w32process_ver_language_name (guint32 lang, gunichar2 *lang_out, guint32 lang_len)
+{
+	return 0;
+}
+
+gboolean
+mono_w32process_get_fileversion_info (const gunichar2 *filename, gpointer *data)
+{
+	return FALSE;
+}
+
+gboolean
+mono_w32process_module_get_information (gpointer handle, gpointer module, MODULEINFO *modinfo, guint32 size)
+{
+	return FALSE;
+}
+
+gboolean
+mono_w32process_ver_query_value (gconstpointer datablock, const gunichar2 *subblock, gpointer *buffer, guint32 *len)
+{
+	return FALSE;
+}
+
+#endif /* ENABLE_NETCORE */

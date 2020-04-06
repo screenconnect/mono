@@ -8,6 +8,8 @@ using System.Text;
 using System.Xml;
 using NUnit.Framework;
 
+using MonoTests.Helpers;
+
 namespace MonoTests.System.ServiceModel.Channels
 {
 	[TestFixture]
@@ -16,7 +18,16 @@ namespace MonoTests.System.ServiceModel.Channels
 		[Test]
 		public void CreateFault ()
 		{
-			var msg = Message.CreateMessage (XmlReader.Create (new StreamReader ("Test/System.ServiceModel.Channels/soap-fault.xml")), 0x10000, MessageVersion.Default);
+			var msg = Message.CreateMessage (XmlReader.Create (new StreamReader (TestResourceHelper.GetFullPathOfResource ("Test/Resources/soap-fault.xml"))), 0x10000, MessageVersion.Default);
+			MessageFault.CreateFault (msg, 0x10000);
+		}
+
+		[Test]
+		public void CreateFaultWithNumberCode ()
+		{
+			var msgVersion = MessageVersion.CreateVersion (EnvelopeVersion.Soap11, AddressingVersion.None);
+
+			var msg = Message.CreateMessage (XmlReader.Create (new StreamReader (TestResourceHelper.GetFullPathOfResource ("Test/Resources/soap-fault-number.xml"))), 0x10000, msgVersion);
 			MessageFault.CreateFault (msg, 0x10000);
 		}
 
@@ -33,7 +44,7 @@ namespace MonoTests.System.ServiceModel.Channels
 		[ExpectedException (typeof (CommunicationException))]
 		public void CreateFaultIncomplete ()
 		{
-			var msg = Message.CreateMessage (XmlReader.Create (new StreamReader ("Test/System.ServiceModel.Channels/soap-fault-incomplete.xml")), 0x10000, MessageVersion.Default);
+			var msg = Message.CreateMessage (XmlReader.Create (new StreamReader (TestResourceHelper.GetFullPathOfResource ("Test/Resources/soap-fault-incomplete.xml"))), 0x10000, MessageVersion.Default);
 			MessageFault.CreateFault (msg, 0x10000);
 		}
 
@@ -55,7 +66,7 @@ namespace MonoTests.System.ServiceModel.Channels
 		[ExpectedException (typeof (CommunicationException))]
 		public void CreateFaultIncomplete4 ()
 		{
-			var msg = Message.CreateMessage (XmlReader.Create (new StreamReader ("Test/System.ServiceModel.Channels/soap-fault-incomplete4.xml")), 0x10000, MessageVersion.Default);
+			var msg = Message.CreateMessage (XmlReader.Create (new StreamReader (TestResourceHelper.GetFullPathOfResource ("Test/Resources/soap-fault-incomplete4.xml"))), 0x10000, MessageVersion.Default);
 			MessageFault.CreateFault (msg, 0x10000);
 		}
 

@@ -34,7 +34,7 @@ typedef struct {
 
 static node_t nodes [N];
 
-static inline void
+static void
 mono_hazard_pointer_clear_all (MonoThreadHazardPointers *hp, int retain)
 {
 	if (retain != 0)
@@ -112,8 +112,14 @@ worker (void *arg)
 	return NULL;
 }
 
+#ifdef __cplusplus
+extern "C"
+#endif
 int
-main (int argc, char *argv [])
+test_mono_linked_list_set_main (void);
+
+int
+test_mono_linked_list_set_main (void)
 {
 	int primes [] = { 1, 2, 3, 5, 7, 11, 13, 17 };
 	thread_data_t thread_data [NUM_THREADS];

@@ -3,7 +3,8 @@ include $(top_srcdir)/mk/common.mk
 AM_CPPFLAGS = \
 	-DSUPPRESSION_DIR=\""$(datadir)/mono-$(API_VER)/mono/profiler"\" \
 	-I$(top_srcdir) \
-	$(GLIB_CFLAGS)
+	$(GLIB_CFLAGS) \
+	$(SHARED_CFLAGS)
 
 glib_libs = $(top_builddir)/mono/eglib/libeglib.la
 
@@ -36,9 +37,7 @@ suppression_DATA = mono-profiler-coverage.suppression
 #
 # See: https://bugzilla.xamarin.com/show_bug.cgi?id=57011
 if !ENABLE_COOP_SUSPEND
-if !ENABLE_HYBRID_SUSPEND
-check_targets = testlog
-endif
+check_targets = run-test
 endif
 
 endif
@@ -99,11 +98,15 @@ endif
 endif
 endif
 
-if HAVE_ZLIB
+if HAVE_STATIC_ZLIB
+zlib_dep = $(STATIC_ZLIB_PATH)
+else
+if HAVE_SYS_ZLIB
 # The log profiler uses zlib for output compression when available.
 zlib_dep = -lz
 else
 zlib_dep =
+endif
 endif
 
 # We build a separate, static version of each profiler for use on targets
@@ -111,16 +114,16 @@ endif
 # the shared version on those targets since it's useful for e.g. simulator
 # builds.
 
-libmono_profiler_aot_la_SOURCES = aot.c
+libmono_profiler_aot_la_SOURCES = aot.c helper.c
 libmono_profiler_aot_la_LIBADD =  $(libmono_dep) $(glib_libs)
 libmono_profiler_aot_la_LDFLAGS = $(prof_ldflags)
-libmono_profiler_aot_static_la_SOURCES = aot.c
+libmono_profiler_aot_static_la_SOURCES = aot.c helper.c
 libmono_profiler_aot_static_la_LDFLAGS = -static
 
-libmono_profiler_log_la_SOURCES = log.c log-args.c
+libmono_profiler_log_la_SOURCES = log.c log-args.c helper.c
 libmono_profiler_log_la_LIBADD = $(libmono_dep) $(glib_libs) $(zlib_dep)
 libmono_profiler_log_la_LDFLAGS = $(prof_ldflags)
-libmono_profiler_log_static_la_SOURCES = log.c log-args.c
+libmono_profiler_log_static_la_SOURCES = log.c log-args.c helper.c
 libmono_profiler_log_static_la_LDFLAGS = -static
 
 libmono_profiler_coverage_la_SOURCES = coverage.c
@@ -142,6 +145,20 @@ endif
 
 mprof_report_SOURCES = mprof-report.c
 mprof_report_LDADD = $(glib_libs) $(zlib_dep)
+mprof_report_LDFLAGS = -no-undefined
+
+noinst_LTLIBRARIES = libproftest_pinvokes.la
+
+libproftest_pinvokes_la_SOURCES = proftest-pinvokes.c
+if HOST_WIN32
+# (borrowed from mono/tests/Makefile.am libtest_la_LDFLAGS)
+# the exported names created by gcc for stdcall functions are missing the leading _, so MS.NET
+# can't find them. So we use --kill-at to remove the @ suffix as well.
+libproftest_pinvokes_la_LDFLAGS = -no-undefined -rpath `pwd` -Wl,--kill-at
+else
+libproftest_pinvokes_la_LDFLAGS = -no-undefined -rpath `pwd`
+endif
+
 
 PLOG_TESTS_SRC = \
 	test-alloc.cs \
@@ -149,6 +166,7 @@ PLOG_TESTS_SRC = \
 	test-monitor.cs \
 	test-excleave.cs \
 	test-heapshot.cs \
+	test-pinvokes.cs \
 	test-traces.cs
 
 PLOG_TESTS = $(PLOG_TESTS_SRC:.cs=.exe)
@@ -160,14 +178,28 @@ MCS = $(TOOLS_RUNTIME) $(CSC) -lib:$(CLASS) -unsafe -nologo -noconfig -nowarn:01
 %.exe: %.cs
 	$(MCS) -out:$@ $<
 
-testlog: $(PLOG_TESTS)
-	MONO_PATH=$(CLASS) perl $(srcdir)/ptestrunner.pl $(top_builddir)
+test-pinvokes.exe: libproftest_pinvokes.la
+
+test-local: $(PLOG_TESTS)
+
+test-bundle-local:
+	mkdir -p $(TEST_BUNDLE_PATH)/tests/profiler/
+	cp -L .libs/libmono-profiler-log$(libsuffix) $(TEST_BUNDLE_PATH)/
+	cp -L $(PLOG_TESTS) $(TEST_BUNDLE_PATH)/tests/profiler/
+	cp -L .libs/libproftest_pinvokes$(libsuffix) $(TEST_BUNDLE_PATH)/tests/profiler/
+	cp -L ptestrunner.pl $(TEST_BUNDLE_PATH)/tests/profiler/
+	cp -L mprof-report $(TEST_BUNDLE_PATH)/
+	chmod +x $(TEST_BUNDLE_PATH)/mprof-report
+
+run-test: test
+	MONO_PATH=$(CLASS) perl $(srcdir)/ptestrunner.pl $(top_builddir) nunit TestResult-profiler.xml
 
 check-local: $(check_targets)
 
 EXTRA_DIST = \
 	log.h \
 	aot.h \
+	helper.h \
 	$(PLOG_TESTS_SRC) \
 	ptestrunner.pl \
 	$(suppression_DATA)

@@ -1721,14 +1721,22 @@ namespace System.Windows.Forms
 		void CalculateCustomColumnWidth ()
 		{
 			int min_width = Int32.MaxValue;
+			int col_index_of_min = -1;
 			for (int i = 0; i < columns.Count; i++) {
 				int col_width = columns [i].Width;
 
-				if (col_width < min_width)
+				if (col_width < min_width) {
 					min_width = col_width;
+					col_index_of_min = i;
+				}
 			}
 
-			custom_column_width = min_width;
+			if (min_width >= 0) // manual width
+				custom_column_width = min_width;
+			else if (col_index_of_min != -1) // automatic width, either -1 or -2
+				custom_column_width = GetChildColumnSize(col_index_of_min).Width;
+			else
+				custom_column_width = 0;
 		}
 
 		void LayoutIcons (Size item_size, bool left_aligned, int x_spacing, int y_spacing)
@@ -3369,6 +3377,9 @@ namespace System.Windows.Forms
 				if (!virtual_mode) // In virtual mode we don't save the items
 					foreach (ListViewItem item in items)
 						item.Owner = null;
+
+				if (item_tooltip != null)
+					item_tooltip.Dispose();
 			}
 			
 			base.Dispose (disposing);
@@ -3949,8 +3960,8 @@ namespace System.Windows.Forms
 		{
 			int count = this.Items.Count;
 
-			if (count == 0)
-				return string.Format ("System.Windows.Forms.ListView, Items.Count: 0");
+			if (count == 0 || VirtualMode)
+				return string.Format ("System.Windows.Forms.ListView, Items.Count: {0}", count);
 			else
 				return string.Format ("System.Windows.Forms.ListView, Items.Count: {0}, Items[0]: {1}", count, this.Items [0].ToString ());
 		}

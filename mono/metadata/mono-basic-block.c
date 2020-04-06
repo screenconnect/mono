@@ -324,6 +324,7 @@ mono_opcode_has_static_branch (int opcode)
 	case MONO_CEE_THROW:
 	case MONO_CEE_RETHROW:
 	case MONO_CEE_ENDFINALLY:
+	case MONO_CEE_MONO_RETHROW:
 		return TRUE;
 	}
 	return FALSE;
@@ -542,11 +543,11 @@ mono_basic_block_split (MonoMethod *method, MonoError *error, MonoMethodHeader *
 
 	root = bb;
 	bb_formation_il_pass (start, end, bb, &root, method, error);
-	if (!mono_error_ok (error))
+	if (!is_ok (error))
 		goto fail;
 	
 	bb_formation_eh_pass (header, bb, &root, method, error);
-	if (!mono_error_ok (error))
+	if (!is_ok (error))
 		goto fail;
 
 	bb_liveness (bb);

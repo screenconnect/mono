@@ -7,10 +7,17 @@ using nuint = System.UInt32;
 using System.Runtime.CompilerServices;
 using System.Runtime;
 
+#if NETCORE
+using Internal.Runtime.CompilerServices;
+#endif
+
 namespace System
 {
 	partial class Buffer
 	{
+		[MethodImplAttribute(MethodImplOptions.InternalCall)]
+		internal static extern unsafe void InternalMemcpy (byte *dest, byte *src, int count);
+
 		public static int ByteLength (Array array)
 		{
 			// note: the other methods in this class also use ByteLength to test for
@@ -21,25 +28,25 @@ namespace System
 
 			int length = _ByteLength (array);
 			if (length < 0)
-				throw new ArgumentException (Locale.GetText ("Object must be an array of primitives."));
+				throw new ArgumentException ("Object must be an array of primitives.");
 
 			return length;
 		}
 
-		public static byte GetByte (Array array, int index)
+		public static unsafe byte GetByte (Array array, int index)
 		{
 			if (index < 0 || index >= ByteLength (array))
 				throw new ArgumentOutOfRangeException ("index");
 
-			return _GetByte (array, index);
+			return *(byte*)(Unsafe.AsPointer<byte> (ref Unsafe.Add<byte> (ref array.GetRawSzArrayData (), index)));
 		}
 
-		public static void SetByte (Array array, int index, byte value)
+		public static unsafe void SetByte (Array array, int index, byte value)
 		{
 			if (index < 0 || index >= ByteLength (array))
 				throw new ArgumentOutOfRangeException ("index");
 
-			_SetByte (array, index, value);
+			*(byte*)(Unsafe.AsPointer<byte> (ref Unsafe.Add<byte> (ref array.GetRawSzArrayData (), index))) = value;
 		}
 
 		public static void BlockCopy (Array src, int srcOffset, Array dst, int dstOffset, int count)
@@ -51,25 +58,22 @@ namespace System
 				throw new ArgumentNullException ("dst");
 
 			if (srcOffset < 0)
-				throw new ArgumentOutOfRangeException ("srcOffset", Locale.GetText(
-					"Non-negative number required."));
+				throw new ArgumentOutOfRangeException ("srcOffset", "Non-negative number required.");
 
 			if (dstOffset < 0)
-				throw new ArgumentOutOfRangeException ("dstOffset", Locale.GetText (
-					"Non-negative number required."));
+				throw new ArgumentOutOfRangeException ("dstOffset", "Non-negative number required.");
 
 			if (count < 0)
-				throw new ArgumentOutOfRangeException ("count", Locale.GetText (
-					"Non-negative number required."));
+				throw new ArgumentOutOfRangeException ("count", "Non-negative number required.");
 
 			// We do the checks in unmanaged code for performance reasons
 			bool res = InternalBlockCopy (src, srcOffset, dst, dstOffset, count);
 			if (!res) {
 				// watch for integer overflow
 				if ((srcOffset > ByteLength (src) - count) || (dstOffset > ByteLength (dst) - count))
-					throw new ArgumentException (Locale.GetText (
+					throw new ArgumentException (
 						"Offset and length were out of bounds for the array or count is greater than " + 
-						"the number of elements from index to the end of the source collection."));
+						"the number of elements from index to the end of the source collection.");
 			}
 		}
 
@@ -89,7 +93,7 @@ namespace System
 				dst += int.MaxValue;
 			}
 
-			memcpy1 (dst, src, (int) sourceBytesToCopy);
+			Memcpy (dst, src, (int) sourceBytesToCopy);
 		}
 
 		[CLSCompliantAttribute (false)]
@@ -191,6 +195,11 @@ namespace System
 		}
 
 		internal static unsafe void Memcpy (byte *dest, byte *src, int len) {
+			// For bigger lengths, we use the heavily optimized native code
+			if (len > 32) {
+				InternalMemcpy (dest, src, len);
+				return;
+			}
 			// FIXME: if pointers are not aligned, try to align them
 			// so a faster routine can be used. Handle the case where
 			// the pointers can't be reduced to have the same alignment

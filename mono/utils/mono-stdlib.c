@@ -11,6 +11,7 @@
 #include <config.h>
 #include <glib.h>
 #include <errno.h>
+#include <mono/utils/mono-errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -38,7 +39,7 @@ mono_mkstemp (char *templ)
 		t = g_mktemp (templ);
 
 		if (t == NULL) {
-			errno = EINVAL;
+			mono_set_errno (EINVAL);
 			return -1;
 		}
 
@@ -59,5 +60,12 @@ mono_mkstemp (char *templ)
 
 	return ret;
 }
+
+#else
+
+#include <mono/utils/mono-compiler.h>
+
+MONO_EMPTY_SOURCE_FILE (mono_stdlib);
+
 #endif
 

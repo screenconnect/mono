@@ -358,7 +358,7 @@ namespace System.Resources {
                     _store.BaseStream.Seek(_nameSectionOffset + GetNamePosition(index), SeekOrigin.Begin);
                     lastReadString = _store.ReadString();
                 }
-                BCLDebug.Log("RESMGRFILEFORMAT", LogLevel.Status, "FindPosForResource for ", name, " failed.  i: ", index, "  lo: ", lo, "  hi: ", hi, "  last read string: \"", lastReadString, '\'');
+                BCLDebug.Log("RESMGRFILEFORMAT", BCLDebugLogLevel.Status, "FindPosForResource for ", name, " failed.  i: ", index, "  lo: ", lo, "  hi: ", hi, "  last read string: \"", lastReadString, '\'');
 #endif
                 return -1;
             }
@@ -791,7 +791,7 @@ namespace System.Resources {
                     // For the case that we've memory mapped in the .resources
                     // file, just return a Stream pointing to that block of memory.
                     unsafe {
-                        return new UnmanagedMemoryStream(_ums.PositionPointer, len, len, FileAccess.Read, true);
+                        return new UnmanagedMemoryStream(_ums.PositionPointer, len, len, FileAccess.Read);
                     }
                 }
                 
@@ -909,7 +909,7 @@ namespace System.Resources {
                 throw new BadImageFormatException(Environment.GetResourceString("BadImageFormat_ResourcesHeaderCorrupted"));
             }
             if (resMgrHeaderVersion > 1) {
-                BCLDebug.Log("RESMGRFILEFORMAT", LogLevel.Status, "ReadResources: Unexpected ResMgr header version: {0}  Skipping ahead {1} bytes.", resMgrHeaderVersion, numBytesToSkip);
+                BCLDebug.Log("RESMGRFILEFORMAT", BCLDebugLogLevel.Status, "ReadResources: Unexpected ResMgr header version: {0}  Skipping ahead {1} bytes.", resMgrHeaderVersion, numBytesToSkip);
                 _store.BaseStream.Seek(numBytesToSkip, SeekOrigin.Current);
             }
             else {

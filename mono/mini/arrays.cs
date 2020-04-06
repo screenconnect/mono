@@ -525,7 +525,7 @@ class Tests
 		size = -1;
 		try {
 			res = new float [size];
-		} catch (OverflowException e) {
+		} catch (OverflowException) {
 
 		} catch (Exception) {
 			return 1;
@@ -536,7 +536,7 @@ class Tests
 		size = -2147483648;
 		try {
 			res = new float [size];
-		} catch (OverflowException e) {
+		} catch (OverflowException) {
 
 		} catch (Exception) {
 			return 3;
@@ -620,7 +620,7 @@ class Tests
 		size = -1;
 		try {
 			res = new float [dym_size, size];
-		} catch (OverflowException e) {
+		} catch (OverflowException) {
 
 		} catch (Exception) {
 			return 1;
@@ -631,7 +631,7 @@ class Tests
 		size = -2147483648;
 		try {
 			res = new float [size, dym_size];
-		} catch (OverflowException e) {
+		} catch (OverflowException) {
 
 		} catch (Exception) {
 			return 3;
@@ -768,11 +768,25 @@ class Tests
 		return 0;
 	}
 
+	public struct TestStruct {
+	}
+
+	// #11603
+	public static int test_0_ldelema () {
+		try {
+			TestStruct[] frames = null;
+			_ = frames[0];
+			return 1;
+		} catch (NullReferenceException) {
+			return 0;
+		}
+	}
+
 	static bool alloc_long (long l) {
 		try {
 			var arr = new byte[l];
 			return false;
-		} catch (Exception e) {
+		} catch (Exception) {
 			return true;
 		}
 	}
@@ -826,8 +840,26 @@ class Tests
 				return i;
 		}
 
-                return 0;
+		return 0;
+	}
+
+	class JaggedClass {
+		public int[][] a;
+
+		public JaggedClass () {
+			a = new int[][]{
+				new int[]{1,2,3},
+				new int[]{4,5,6},
+				new int[]{7,8,9}
+			};
+		}
+	}
+
+	public static int test_4_ref_jagged_array () {
+		var f = new JaggedClass ();
+
+		ref int[] r = ref f.a[1];
+
+		return r [0];
 	}
 }
-
-

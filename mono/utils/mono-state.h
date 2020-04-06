@@ -18,10 +18,10 @@
 #include <mono/metadata/threads-types.h>
 #include <mono/utils/json.h>
 
-#define MONO_NATIVE_STATE_PROTOCOL_VERSION "0.0.4"
+#define MONO_NATIVE_STATE_PROTOCOL_VERSION "0.0.6"
 
 typedef enum {
-	MonoSummaryNone,
+	MonoSummaryNone = 0,
 	MonoSummarySetup,
 	MonoSummarySuspendHandshake,
 	MonoSummaryUnmanagedStacks,
@@ -52,14 +52,12 @@ typedef struct {
 	gint64 tag;
 } MonoStateMem;
 
-MONO_BEGIN_DECLS
-
 // Logging
 gboolean
 mono_summarize_set_timeline_dir (const char *directory);
 
 void
-mono_summarize_timeline_start (void);
+mono_summarize_timeline_start (const char *dump_reason);
 
 void
 mono_summarize_timeline_phase_log (MonoSummaryStage stage);
@@ -96,6 +94,33 @@ mono_summarize_native_state_add_thread (MonoStateWriter *writer, MonoThreadSumma
 void
 mono_state_writer_init (MonoStateWriter *writer, gchar *output_str, int len);
 
+// Logging
+gboolean
+mono_summarize_set_timeline_dir (const char *directory);
+
+void
+mono_summarize_timeline_start (void);
+
+void
+mono_summarize_timeline_phase_log (MonoSummaryStage stage);
+
+void
+mono_summarize_double_fault_log (void);
+
+MonoSummaryStage
+mono_summarize_timeline_read_level (const char *directory, gboolean clear);
+
+// Enable checked-build assertions on summary workflow
+// Turns all potential hangs into instant faults
+void
+mono_summarize_toggle_assertions (gboolean enable);
+
+// Json State Writer
+
+/*
+ * These use static memory, can only be called once
+ */
+
 void
 mono_native_state_init (MonoStateWriter *writer);
 
@@ -104,6 +129,38 @@ mono_native_state_emit (MonoStateWriter *writer);
 
 char *
 mono_native_state_free (MonoStateWriter *writer, gboolean free_data);
+
+void
+mono_native_state_add_thread (MonoStateWriter *writer, MonoThreadSummary *thread, MonoContext *ctx, gboolean first_thread, gboolean crashing_thread);
+
+void
+mono_crash_dump (const char *jsonFile, MonoStackHash *hashes);
+
+// Signal-safe file allocators
+
+gboolean
+mono_state_alloc_mem (MonoStateMem *mem, long tag, size_t size);
+
+void
+mono_state_free_mem (MonoStateMem *mem);
+
+char*
+mono_crash_save_failfast_msg (char *msg);
+
+const char*
+mono_crash_get_failfast_msg (void);
+
+void
+mono_create_crash_hash_breadcrumb (MonoThreadSummary *thread);
+
+#endif // DISABLE_CRASH_REPORTING
+
+// Dump context functions (enter/leave)
+
+gboolean
+mono_dump_start (void);
+gboolean
+mono_dump_complete (void);
 
 void
 mono_native_state_add_thread (MonoStateWriter *writer, MonoThreadSummary *thread, MonoContext *ctx, gboolean first_thread, gboolean crashing_thread);

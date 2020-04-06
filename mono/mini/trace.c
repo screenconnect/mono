@@ -94,7 +94,7 @@ string_to_utf8 (MonoString *s)
 	if (!s->length)
 		return g_strdup ("");
 
-	as = g_utf16_to_utf8 (mono_string_chars (s), s->length, NULL, NULL, &gerror);
+	as = g_utf16_to_utf8 (mono_string_chars_internal (s), s->length, NULL, NULL, &gerror);
 	if (gerror) {
 		/* Happens with StringBuilders */
 		g_error_free (gerror);
@@ -105,28 +105,42 @@ string_to_utf8 (MonoString *s)
 }
 
 /*
- * cpos (ebp + arg_info[n].offset) points to the beginning of the
- * stack slot for this argument.  On little-endian systems, we can
- * simply dereference it. On big-endian systems, we need to adjust
- * cpos upward first if the datatype we're referencing is smaller than
- * a stack slot. Also - one can't assume that gpointer is also the
- * size of a stack slot - use SIZEOF_REGISTER instead. The following
- * helper macro tries to keep down the mess of all the pointer
- * calculations.
+ * This used to be endianness sensitive due to the stack, but since the change
+ * to using the profiler to get an argument, it can be dereferenced as a
+ * pointer of the specified type, regardless of endian.
  */
-#if (G_BYTE_ORDER == G_LITTLE_ENDIAN)
 #define arg_in_stack_slot(cpos, type) ((type *)(cpos))
-#else
-#define arg_in_stack_slot(cpos, type) ((type *)((sizeof(type) < SIZEOF_REGISTER) ? (((gssize)(cpos)) + SIZEOF_REGISTER - sizeof(type)) : (gssize)(cpos)))
-#endif
+
+static gboolean
+is_gshared_vt_wrapper (MonoMethod *m)
+{
+	if (m->wrapper_type != MONO_WRAPPER_OTHER)
+		return FALSE;
+	return !strcmp (m->name, "interp_in") || !strcmp (m->name, "gsharedvt_out_sig");
+}
+
+/* ENTER:i <- interp
+ * ENTER:c <- compiled (JIT or AOT)
+ * ENTER:u <- no JitInfo available
+ */
+static char
+frame_kind (MonoJitInfo *ji)
+{
+	if (!ji)
+		return 'u';
+
+	if (ji->is_interp)
+		return 'i';
+
+	return 'c';
+}
 
 void
-mono_trace_enter_method (MonoMethod *method, char *ebp)
+mono_trace_enter_method (MonoMethod *method, MonoJitInfo *ji, MonoProfilerCallContext *ctx)
 {
-	int i, j;
+	int i;
 	MonoClass *klass;
 	MonoObject *o;
-	MonoJitArgumentInfo *arg_info;
 	MonoMethodSignature *sig;
 	char *fname;
 	MonoGenericSharingContext *gsctx = NULL;
@@ -134,69 +148,38 @@ mono_trace_enter_method (MonoMethod *method, char *ebp)
 	if (!trace_spec.enabled)
 		return;
 
+	fname = mono_method_full_name (method, TRUE);
+	indent (1);
+
 	while (output_lock != 0 || mono_atomic_cas_i32 (&output_lock, 1, 0) != 0)
 		mono_thread_info_yield ();
 
-	fname = mono_method_full_name (method, TRUE);
-	indent (1);
-	printf ("ENTER: %s(", fname);
+
+	/* FIXME: Might be better to pass the ji itself */
+	if (!ji)
+		ji = mini_jit_info_table_find (mono_domain_get (), (char *)MONO_RETURN_ADDRESS (), NULL);
+
+	printf ("ENTER:%c %s(", frame_kind (ji), fname);
 	g_free (fname);
 
-	if (!ebp) {
+	sig = mono_method_signature_internal (method);
 
-// https://github.com/mono/mono/issues/8572
-// Build fails on Redhat 6.8 with GCC 4.4.7.
-// Old gcc does not allow pragma diagnostic within function.
-#if __clang__ || __GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ >= 6)
-#define GCC_PRAGMA_DIAGNOSTIC_WITHIN_FUNCTION 1
-#endif
-
-#if GCC_PRAGMA_DIAGNOSTIC_WITHIN_FUNCTION
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wunknown-warning-option"
-#pragma GCC diagnostic ignored "-Wframe-address"
-#endif
-
-		printf (") ip: %p\n", MONO_RETURN_ADDRESS_N (1));
-
-#if GCC_PRAGMA_DIAGNOSTIC_WITHIN_FUNCTION
-#pragma GCC diagnostic pop
-#endif
-
-		goto unlock;
-	}
-
-	sig = mono_method_signature (method);
-
-	arg_info = (MonoJitArgumentInfo *)alloca (sizeof (MonoJitArgumentInfo) * (sig->param_count + 1));
-
-	if (method->is_inflated) {
-		/* FIXME: Might be better to pass the ji itself */
-		MonoJitInfo *ji = mini_jit_info_table_find (mono_domain_get (), (char *)MONO_RETURN_ADDRESS (), NULL);
-		if (ji) {
-			gsctx = mono_jit_info_get_generic_sharing_context (ji);
-			if (gsctx && gsctx->is_gsharedvt) {
-				/* Needs a ctx to get precise method */
-				printf (") <gsharedvt>\n");
-				goto unlock;
-			}
+	if (method->is_inflated && ji) {
+		gsctx = mono_jit_info_get_generic_sharing_context (ji);
+		if (gsctx && gsctx->is_gsharedvt) {
+			/* Needs a ctx to get precise method */
+			printf (") <gsharedvt>\n");
+			mono_atomic_store_release (&output_lock, 0);
+			return;
 		}
 	}
 
-	mono_arch_get_argument_info (sig, sig->param_count, arg_info);
-
-	if (MONO_TYPE_ISSTRUCT (mono_method_signature (method)->ret)) {
-		g_assert (!mono_method_signature (method)->ret->byref);
-
-		printf ("VALUERET:%p, ", *((gpointer *)(ebp + 8)));
-	}
-
-	if (mono_method_signature (method)->hasthis) {
-		gpointer *this_obj = (gpointer *)(ebp + arg_info [0].offset);
-		if (m_class_is_valuetype (method->klass)) {
-			printf ("value:%p, ", *arg_in_stack_slot(this_obj, gpointer *));
+	if (sig->hasthis) {
+		void *this_buf = mini_profiler_context_get_this (ctx);
+		if (m_class_is_valuetype (method->klass) || is_gshared_vt_wrapper (method)) {
+			printf ("value:%p", this_buf);
 		} else {
-			o = *arg_in_stack_slot(this_obj, MonoObject *);
+			MonoObject *o = *(MonoObject**)this_buf;
 
 			if (o) {
 				klass = o->vtable->klass;
@@ -205,61 +188,69 @@ mono_trace_enter_method (MonoMethod *method, char *ebp)
 					MonoString *s = (MonoString*)o;
 					char *as = string_to_utf8 (s);
 
-					printf ("this:[STRING:%p:%s], ", o, as);
+					printf ("this:[STRING:%p:%s]", o, as);
 					g_free (as);
+				} else if (klass == mono_defaults.runtimetype_class) {
+					printf ("[this:[TYPE:%p:%s]]", o, mono_type_full_name (((MonoReflectionType*)o)->type));
 				} else {
-					printf ("this:%p[%s.%s %s], ", o, m_class_get_name_space (klass), m_class_get_name (klass), o->vtable->domain->friendly_name);
+					printf ("this:%p[%s.%s %s]", o, m_class_get_name_space (klass), m_class_get_name (klass), o->vtable->domain->friendly_name);
 				}
-			} else 
-				printf ("this:NULL, ");
+			} else {
+				printf ("this:NULL");
+			}
 		}
+		if (sig->param_count)
+			printf (", ");
+		mini_profiler_context_free_buffer (this_buf);
 	}
 
-	for (i = 0; i < mono_method_signature (method)->param_count; ++i) {
-		gpointer *cpos = (gpointer *)(ebp + arg_info [i + 1].offset);
-		int size = arg_info [i + 1].size;
+	for (i = 0; i < sig->param_count; ++i) {
+		gpointer buf = mini_profiler_context_get_argument (ctx, i);
 
-		MonoType *type = mono_method_signature (method)->params [i];
-		
+		MonoType *type = sig->params [i];
+
 		if (type->byref) {
-			printf ("[BYREF:%p], ", *arg_in_stack_slot(cpos, gpointer *));
-		} else switch (mini_get_underlying_type (type)->type) {
-			
+			printf ("[BYREF:%p]", *(gpointer*)buf);
+			mini_profiler_context_free_buffer (buf);
+			break;
+		}
+
+		switch (mini_get_underlying_type (type)->type) {
 		case MONO_TYPE_I:
 		case MONO_TYPE_U:
-			printf ("%p, ", *arg_in_stack_slot(cpos, gpointer *));
+			printf ("%p", *arg_in_stack_slot(buf, gpointer *));
 			break;
 		case MONO_TYPE_BOOLEAN:
 		case MONO_TYPE_CHAR:
 		case MONO_TYPE_I1:
 		case MONO_TYPE_U1:
-			printf ("%d, ", *arg_in_stack_slot(cpos, gint8));
+			printf ("%d", *arg_in_stack_slot(buf, gint8));
 			break;
 		case MONO_TYPE_I2:
 		case MONO_TYPE_U2:
-			printf ("%d, ", *arg_in_stack_slot(cpos, gint16));
+			printf ("%d", *arg_in_stack_slot(buf, gint16));
 			break;
 		case MONO_TYPE_I4:
 		case MONO_TYPE_U4:
-			printf ("%d, ", *arg_in_stack_slot(cpos, int));
+			printf ("%d", *arg_in_stack_slot(buf, int));
 			break;
 		case MONO_TYPE_STRING: {
-			MonoString *s = *arg_in_stack_slot(cpos, MonoString *);
+			MonoString *s = *arg_in_stack_slot(buf, MonoString *);
 			if (s) {
 				char *as;
 
 				g_assert (((MonoObject *)s)->vtable->klass == mono_defaults.string_class);
 				as = string_to_utf8 (s);
 
-				printf ("[STRING:%p:%s], ", s, as);
+				printf ("[STRING:%p:%s]", s, as);
 				g_free (as);
 			} else 
-				printf ("[STRING:null], ");
+				printf ("[STRING:null]");
 			break;
 		}
 		case MONO_TYPE_CLASS:
 		case MONO_TYPE_OBJECT: {
-			o = *arg_in_stack_slot(cpos, MonoObject *);
+			o = *arg_in_stack_slot(buf, MonoObject *);
 			if (o) {
 				klass = o->vtable->klass;
 
@@ -267,16 +258,19 @@ mono_trace_enter_method (MonoMethod *method, char *ebp)
 				if (klass == mono_defaults.string_class) {
 					char *as = string_to_utf8 ((MonoString*)o);
 
-					printf ("[STRING:%p:%s], ", o, as);
+					printf ("[STRING:%p:%s]", o, as);
 					g_free (as);
 				} else if (klass == mono_defaults.int32_class) {
-					printf ("[INT32:%p:%d], ", o, *(gint32 *)data);
+					printf ("[INT32:%p:%d]", o, *(gint32 *)data);
 				} else if (klass == mono_defaults.runtimetype_class) {
-					printf ("[TYPE:%s], ", mono_type_full_name (((MonoReflectionType*)o)->type));
+					printf ("[TYPE:%s]", mono_type_full_name (((MonoReflectionType*)o)->type));
+				} else if (m_class_get_rank (klass)) {
+					MonoArray *arr = (MonoArray*)o;
+					printf ("[%s.%s:[%d]%p]", m_class_get_name_space (klass), m_class_get_name (klass), mono_array_length_internal (arr), o);
 				} else
-					printf ("[%s.%s:%p], ", m_class_get_name_space (klass), m_class_get_name (klass), o);
+					printf ("[%s.%s:%p]", m_class_get_name_space (klass), m_class_get_name (klass), o);
 			} else {
-				printf ("%p, ", *arg_in_stack_slot(cpos, gpointer));
+				printf ("%p", *arg_in_stack_slot(buf, gpointer));
 			}
 			break;
 		}
@@ -284,114 +278,107 @@ mono_trace_enter_method (MonoMethod *method, char *ebp)
 		case MONO_TYPE_FNPTR:
 		case MONO_TYPE_ARRAY:
 		case MONO_TYPE_SZARRAY:
-			printf ("%p, ", *arg_in_stack_slot(cpos, gpointer));
+			printf ("%p", *arg_in_stack_slot(buf, gpointer));
 			break;
 		case MONO_TYPE_I8:
 		case MONO_TYPE_U8:
-			printf ("0x%016llx, ", (long long)*arg_in_stack_slot(cpos, gint64));
+			printf ("0x%016llx", (long long)*arg_in_stack_slot(buf, gint64));
 			break;
 		case MONO_TYPE_R4:
-			printf ("%f, ", *arg_in_stack_slot(cpos, float));
+			printf ("%f", *arg_in_stack_slot(buf, float));
 			break;
 		case MONO_TYPE_R8:
-			printf ("%f, ", *arg_in_stack_slot(cpos, double));
+			printf ("%f", *arg_in_stack_slot(buf, double));
 			break;
-		case MONO_TYPE_VALUETYPE: 
+		case MONO_TYPE_VALUETYPE: {
+			int j, size, align;
+			size = mono_type_size (type, &align);
 			printf ("[");
 			for (j = 0; j < size; j++)
-				printf ("%02x,", *((guint8*)cpos +j));
-			printf ("], ");
+				printf ("%02x,", *((guint8*)buf +j));
+			printf ("]");
 			break;
-		default:
-			printf ("XX, ");
 		}
+		default:
+			printf ("XX");
+		}
+		if (i + 1 < sig->param_count)
+			printf (", ");
+		mini_profiler_context_free_buffer (buf);
 	}
 
 	printf (")\n");
 	fflush (stdout);
 
-unlock:
 	mono_atomic_store_release (&output_lock, 0);
 }
 
 void
-mono_trace_leave_method (MonoMethod *method, ...)
+mono_trace_leave_method (MonoMethod *method, MonoJitInfo *ji, MonoProfilerCallContext *ctx)
 {
 	MonoType *type;
 	char *fname;
-	va_list ap;
 	MonoGenericSharingContext *gsctx;
 
 	if (!trace_spec.enabled)
 		return;
 
+	fname = mono_method_full_name (method, TRUE);
+	indent (-1);
+
 	while (output_lock != 0 || mono_atomic_cas_i32 (&output_lock, 1, 0) != 0)
 		mono_thread_info_yield ();
 
-	va_start(ap, method);
+	/* FIXME: Might be better to pass the ji itself from the JIT */
+	if (!ji)
+		ji = mini_jit_info_table_find (mono_domain_get (), (char *)MONO_RETURN_ADDRESS (), NULL);
 
-	fname = mono_method_full_name (method, TRUE);
-	indent (-1);
-	printf ("LEAVE: %s", fname);
+	printf ("LEAVE:%c %s(", frame_kind (ji), fname);
 	g_free (fname);
 
-	if (method->is_inflated) {
-		/* FIXME: Might be better to pass the ji itself */
-		MonoJitInfo *ji = mini_jit_info_table_find (mono_domain_get (), (char *)MONO_RETURN_ADDRESS (), NULL);
-		if (ji) {
-			gsctx = mono_jit_info_get_generic_sharing_context (ji);
-			if (gsctx && gsctx->is_gsharedvt) {
-				/* Needs a ctx to get precise method */
-				printf (") <gsharedvt>\n");
-				goto unlock;
-			}
+	if (method->is_inflated && ji) {
+		gsctx = mono_jit_info_get_generic_sharing_context (ji);
+		if (gsctx && gsctx->is_gsharedvt) {
+			/* Needs a ctx to get precise method */
+			printf (") <gsharedvt>\n");
+			mono_atomic_store_release (&output_lock, 0);
+			return;
 		}
 	}
 
-	type = mini_get_underlying_type (mono_method_signature (method)->ret);
+	type = mini_get_underlying_type (mono_method_signature_internal (method)->ret);
 
+	gpointer buf = mini_profiler_context_get_result (ctx);
 	switch (type->type) {
 	case MONO_TYPE_VOID:
 		break;
-	case MONO_TYPE_BOOLEAN: {
-		int eax = va_arg (ap, int);
-		if (eax)
-			printf ("TRUE:%d", eax);
-		else 
-			printf ("FALSE");
-			
+	case MONO_TYPE_I1:
+	case MONO_TYPE_U1: {
+		gint8 res = *arg_in_stack_slot (buf, gint8);
+		printf ("result=%d", res);
 		break;
 	}
-	case MONO_TYPE_CHAR:
-	case MONO_TYPE_I1:
-	case MONO_TYPE_U1:
 	case MONO_TYPE_I2:
-	case MONO_TYPE_U2:
+	case MONO_TYPE_U2: {
+		gint16 res = *arg_in_stack_slot (buf, gint16);
+		printf ("result=%d", res);
+		break;
+	}
 	case MONO_TYPE_I4:
-	case MONO_TYPE_U4:
+	case MONO_TYPE_U4: {
+		int res = *arg_in_stack_slot (buf, int);
+		printf ("result=%d", res);
+		break;
+	}
+	case MONO_TYPE_PTR:
 	case MONO_TYPE_I:
 	case MONO_TYPE_U: {
-		int eax = va_arg (ap, int);
-		printf ("result=%d", eax);
+		gpointer res = *arg_in_stack_slot (buf, gpointer);
+		printf ("result=%p", res);
 		break;
 	}
-	case MONO_TYPE_STRING: {
-		MonoString *s = va_arg (ap, MonoString *);
-;
-		if (s) {
-			char *as;
-
-			g_assert (((MonoObject *)s)->vtable->klass == mono_defaults.string_class);
-			as = string_to_utf8 (s);
-			printf ("[STRING:%p:%s]", s, as);
-			g_free (as);
-		} else 
-			printf ("[STRING:null], ");
-		break;
-	}
-	case MONO_TYPE_CLASS: 
 	case MONO_TYPE_OBJECT: {
-		MonoObject *o = va_arg (ap, MonoObject *);
+		MonoObject *o = *arg_in_stack_slot (buf, MonoObject*);
 
 		if (o) {
 			gpointer data = mono_object_get_data (o);
@@ -401,39 +388,36 @@ mono_trace_leave_method (MonoMethod *method, ...)
 				printf ("[INT32:%p:%d]", o, *(gint32 *)data);
 			} else if  (o->vtable->klass == mono_defaults.int64_class) {
 				printf ("[INT64:%p:%lld]", o, (long long)*(gint64 *)data);
-			} else
+			} else if (o->vtable->klass == mono_defaults.string_class) {
+				char *as;
+				as = string_to_utf8 ((MonoString*)o);
+				printf ("[STRING:%p:%s]", o, as);
+			} else {
 				printf ("[%s.%s:%p]", m_class_get_name_space (mono_object_class (o)), m_class_get_name (mono_object_class (o)), o);
+			}
 		} else
 			printf ("[OBJECT:%p]", o);
 	       
 		break;
 	}
-	case MONO_TYPE_PTR:
-	case MONO_TYPE_FNPTR:
-	case MONO_TYPE_ARRAY:
-	case MONO_TYPE_SZARRAY: {
-		gpointer p = va_arg (ap, gpointer);
-		printf ("result=%p", p);
-		break;
-	}
 	case MONO_TYPE_I8: {
-		gint64 l =  va_arg (ap, gint64);
+		gint64 l =  *arg_in_stack_slot (buf, gint64);
 		printf ("lresult=0x%16llx", (long long)l);
 		break;
 	}
 	case MONO_TYPE_U8: {
-		gint64 l =  va_arg (ap, gint64);
+		gint64 l =  *arg_in_stack_slot (buf, gint64);
 		printf ("lresult=0x%16llx", (long long)l);
 		break;
 	}
 	case MONO_TYPE_R4:
 	case MONO_TYPE_R8: {
-		double f = va_arg (ap, double);
+		double f = *arg_in_stack_slot (buf, double);
 		printf ("FP=%f", f);
 		break;
 	}
 	case MONO_TYPE_VALUETYPE:  {
-		guint8 *p = (guint8 *)va_arg (ap, gpointer);
+		guint8 *p = (guint8 *)buf;
 		int j, size, align;
 		size = mono_type_size (type, &align);
 		printf ("[");
@@ -443,14 +427,14 @@ mono_trace_leave_method (MonoMethod *method, ...)
 		break;
 	}
 	default:
-		printf ("(unknown return type %x)", mono_method_signature (method)->ret->type);
+		printf ("(unknown return type %x)", mono_method_signature_internal (method)->ret->type);
 	}
+	mini_profiler_context_free_buffer (buf);
 
 	//printf (" ip: %p\n", MONO_RETURN_ADDRESS_N (1));
 	printf ("\n");
 	fflush (stdout);
 
-unlock:
 	mono_atomic_store_release (&output_lock, 0);
 }
 

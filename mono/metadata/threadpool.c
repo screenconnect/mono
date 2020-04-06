@@ -21,13 +21,18 @@
 //
 // Ported from C++ to C and adjusted to Mono runtime
 
+#include <config.h>
+#include <mono/utils/mono-compiler.h>
+
+#ifndef ENABLE_NETCORE
+
 #include <stdlib.h>
 #define _USE_MATH_DEFINES // needed by MSVC to define math constants
 #include <math.h>
-#include <config.h>
 #include <glib.h>
 
 #include <mono/metadata/class-internals.h>
+#include <mono/metadata/domain-internals.h>
 #include <mono/metadata/exception.h>
 #include <mono/metadata/gc-internals.h>
 #include <mono/metadata/object.h>
@@ -47,6 +52,8 @@
 #include <mono/utils/mono-time.h>
 #include <mono/utils/refcount.h>
 #include <mono/utils/mono-os-wait.h>
+#include "monitor.h"
+#include "icall-decl.h"
 
 // consistency with coreclr https://github.com/dotnet/coreclr/blob/643b09f966e68e06d5f0930755985a01a2a2b096/src/vm/win32threadpool.h#L111
 #define MAX_POSSIBLE_THREADS 0x7fff
@@ -99,7 +106,7 @@ static ThreadPool threadpool;
 		} while (mono_atomic_cas_i32 (&threadpool.counters.as_gint32, (var).as_gint32, __old.as_gint32) != __old.as_gint32); \
 	} while (0)
 
-static inline ThreadPoolCounter
+static ThreadPoolCounter
 COUNTER_READ (void)
 {
 	ThreadPoolCounter counter;
@@ -107,13 +114,13 @@ COUNTER_READ (void)
 	return counter;
 }
 
-static inline void
+static void
 domains_lock (void)
 {
 	mono_coop_mutex_lock (&threadpool.domains_lock);
 }
 
-static inline void
+static void
 domains_unlock (void)
 {
 	mono_coop_mutex_unlock (&threadpool.domains_lock);
@@ -182,20 +189,17 @@ mono_threadpool_enqueue_work_item (MonoDomain *domain, MonoObject *work_item, Mo
 	current_domain = mono_domain_get ();
 	if (current_domain == domain) {
 		mono_runtime_invoke_checked (unsafe_queue_custom_work_item_method, NULL, args, error);
-		return_val_if_nok (error, FALSE);
 	} else {
 		mono_thread_push_appdomain_ref (domain);
-		if (mono_domain_set (domain, FALSE)) {
+		if (mono_domain_set_fast (domain, FALSE)) {
 			mono_runtime_invoke_checked (unsafe_queue_custom_work_item_method, NULL, args, error);
-			if (!is_ok (error)) {
-				mono_thread_pop_appdomain_ref ();
-				return FALSE;
-			}
-			mono_domain_set (current_domain, TRUE);
+			mono_domain_set_fast (current_domain, TRUE);
+		} else {
+			// mono_domain_set_fast failing still leads to success.
 		}
 		mono_thread_pop_appdomain_ref ();
 	}
-	return TRUE;
+	return is_ok (error);
 }
 
 /* LOCKING: domains_lock must be held. */
@@ -281,14 +285,19 @@ try_invoke_perform_wait_callback (MonoObject** exc, MonoError *error)
 {
 	HANDLE_FUNCTION_ENTER ();
 	error_init (error);
-	MonoObject *res = mono_runtime_try_invoke (mono_defaults.threadpool_perform_wait_callback_method, NULL, NULL, exc, error);
+	MonoObject * const res = mono_runtime_try_invoke (mono_defaults.threadpool_perform_wait_callback_method, NULL, NULL, exc, error);
 	HANDLE_FUNCTION_RETURN_VAL (res);
+}
+
+static gsize
+set_thread_name (MonoInternalThread *thread)
+{
+	return mono_thread_set_name_constant_ignore_error (thread, "Thread Pool Worker", MonoSetThreadNameFlag_Reset);
 }
 
 static void
 worker_callback (void)
 {
-	ERROR_DECL (error);
 	ThreadPoolDomain *tpdomain, *previous_tpdomain;
 	ThreadPoolCounter counter;
 	MonoInternalThread *thread;
@@ -321,6 +330,11 @@ worker_callback (void)
 	 */
 	mono_defaults.threadpool_perform_wait_callback_method->save_lmf = TRUE;
 
+	gsize name_generation = thread->name.generation;
+	/* Set the name if this is the first call to worker_callback on this thread */
+	if (name_generation == 0)
+	   name_generation = set_thread_name (thread);
+
 	domains_lock ();
 
 	previous_tpdomain = NULL;
@@ -352,33 +366,42 @@ worker_callback (void)
 
 		domains_unlock ();
 
-		MonoString *thread_name = mono_string_new_checked (mono_get_root_domain (), "Thread Pool Worker", error);
-		mono_error_assert_ok (error);
-		mono_thread_set_name_internal (thread, thread_name, FALSE, TRUE, error);
-		mono_error_assert_ok (error);
+		// Any thread can set any other thread name at any time.
+		// So this is unavoidably racy.
+		// This only partly fights against that -- i.e. not atomic and not a loop.
+		// It is reliable against the thread setting its own name, and somewhat
+		// reliable against other threads setting this thread's name.
+		if (name_generation != thread->name.generation)
+			name_generation = set_thread_name (thread);
 
 		mono_thread_clear_and_set_state (thread,
 			(MonoThreadState)~ThreadState_Background,
 			ThreadState_Background);
 
 		mono_thread_push_appdomain_ref (tpdomain->domain);
-		if (mono_domain_set (tpdomain->domain, FALSE)) {
+		if (mono_domain_set_fast (tpdomain->domain, FALSE)) {
 			MonoObject *exc = NULL, *res;
 
+			ERROR_DECL (error);
+
 			res = try_invoke_perform_wait_callback (&exc, error);
-			if (exc || !mono_error_ok(error)) {
+			if (exc || !is_ok(error)) {
 				if (exc == NULL)
 					exc = (MonoObject *) mono_error_convert_to_exception (error);
 				else
 					mono_error_cleanup (error);
 				mono_thread_internal_unhandled_exception (exc);
-			} else if (res && *(MonoBoolean*) mono_object_unbox (res) == FALSE) {
+			} else if (res && *(MonoBoolean*) mono_object_unbox_internal (res) == FALSE) {
 				retire = TRUE;
 			}
 
-			mono_domain_set (mono_get_root_domain (), TRUE);
+			mono_domain_set_fast (mono_get_root_domain (), TRUE);
 		}
 		mono_thread_pop_appdomain_ref ();
+
+		/* Reset name after every callback */
+		if (name_generation != thread->name.generation)
+			name_generation = set_thread_name (thread);
 
 		domains_lock ();
 
@@ -434,23 +457,23 @@ mono_threadpool_begin_invoke (MonoDomain *domain, MonoObject *target, MonoMethod
 
 	error_init (error);
 
-	message = mono_method_call_message_new (method, params, mono_get_delegate_invoke (method->klass), (params != NULL) ? (&async_callback) : NULL, (params != NULL) ? (&state) : NULL, error);
+	message = mono_method_call_message_new (method, params, mono_get_delegate_invoke_internal (method->klass), (params != NULL) ? (&async_callback) : NULL, (params != NULL) ? (&state) : NULL, error);
 	return_val_if_nok (error, NULL);
 
 	async_call = (MonoAsyncCall*) mono_object_new_checked (domain, async_call_klass, error);
 	return_val_if_nok (error, NULL);
 
-	MONO_OBJECT_SETREF (async_call, msg, message);
-	MONO_OBJECT_SETREF (async_call, state, state);
+	MONO_OBJECT_SETREF_INTERNAL (async_call, msg, message);
+	MONO_OBJECT_SETREF_INTERNAL (async_call, state, state);
 
 	if (async_callback) {
-		MONO_OBJECT_SETREF (async_call, cb_method, mono_get_delegate_invoke (((MonoObject*) async_callback)->vtable->klass));
-		MONO_OBJECT_SETREF (async_call, cb_target, async_callback);
+		MONO_OBJECT_SETREF_INTERNAL (async_call, cb_method, mono_get_delegate_invoke_internal (((MonoObject*) async_callback)->vtable->klass));
+		MONO_OBJECT_SETREF_INTERNAL (async_call, cb_target, async_callback);
 	}
 
 	async_result = mono_async_result_new (domain, NULL, async_call->state, NULL, (MonoObject*) async_call, error);
 	return_val_if_nok (error, NULL);
-	MONO_OBJECT_SETREF (async_result, async_delegate, target);
+	MONO_OBJECT_SETREF_INTERNAL (async_result, async_delegate, target);
 
 	mono_threadpool_enqueue_work_item (domain, (MonoObject*) async_result, error);
 	return_val_if_nok (error, NULL);
@@ -471,11 +494,11 @@ mono_threadpool_end_invoke (MonoAsyncResult *ares, MonoArray **out_args, MonoObj
 	*out_args = NULL;
 
 	/* check if already finished */
-	mono_monitor_enter ((MonoObject*) ares);
+	mono_monitor_enter_internal ((MonoObject*) ares);
 
 	if (ares->endinvoke_called) {
 		mono_error_set_invalid_operation(error, "Delegate EndInvoke method called more than once");
-		mono_monitor_exit ((MonoObject*) ares);
+		mono_monitor_exit_internal ((MonoObject*) ares);
 		return NULL;
 	}
 
@@ -483,7 +506,7 @@ mono_threadpool_end_invoke (MonoAsyncResult *ares, MonoArray **out_args, MonoObj
 
 	/* wait until we are really finished */
 	if (ares->completed) {
-		mono_monitor_exit ((MonoObject *) ares);
+		mono_monitor_exit_internal ((MonoObject *) ares);
 	} else {
 		gpointer wait_event;
 		if (ares->handle) {
@@ -496,16 +519,10 @@ mono_threadpool_end_invoke (MonoAsyncResult *ares, MonoArray **out_args, MonoObj
 				mono_w32event_close (wait_event);
 				return NULL;
 			}
-			MONO_OBJECT_SETREF (ares, handle, (MonoObject*) wait_handle);
+			MONO_OBJECT_SETREF_INTERNAL (ares, handle, (MonoObject*) wait_handle);
 		}
-		mono_monitor_exit ((MonoObject*) ares);
-#ifdef HOST_WIN32
-		MONO_ENTER_GC_SAFE;
-		mono_win32_wait_for_single_object_ex (wait_event, INFINITE, TRUE);
-		MONO_EXIT_GC_SAFE;
-#else
+		mono_monitor_exit_internal ((MonoObject*) ares);
 		mono_w32handle_wait_one (wait_event, MONO_INFINITE_WAIT, TRUE);
-#endif
 	}
 
 	ac = (MonoAsyncCall*) ares->object_data;
@@ -519,7 +536,7 @@ mono_threadpool_end_invoke (MonoAsyncResult *ares, MonoArray **out_args, MonoObj
 gboolean
 mono_threadpool_remove_domain_jobs (MonoDomain *domain, int timeout)
 {
-	gint64 end;
+	gint64 end = 0;
 	ThreadPoolDomain *tpdomain;
 	gboolean ret;
 
@@ -806,23 +823,6 @@ ves_icall_System_Threading_ThreadPool_RequestWorkerThread (MonoError *error)
 	return TRUE;
 }
 
-MonoBoolean G_GNUC_UNUSED
-ves_icall_System_Threading_ThreadPool_PostQueuedCompletionStatus (MonoNativeOverlapped *native_overlapped, MonoError *error)
-{
-	/* This copy the behavior of the current Mono implementation */
-	mono_error_set_not_implemented (error, "");
-	return FALSE;
-}
+#endif /* !ENABLE_NETCORE */
 
-MonoBoolean G_GNUC_UNUSED
-ves_icall_System_Threading_ThreadPool_BindIOCompletionCallbackNative (gpointer file_handle, MonoError *error)
-{
-	/* This copy the behavior of the current Mono implementation */
-	return TRUE;
-}
-
-MonoBoolean G_GNUC_UNUSED
-ves_icall_System_Threading_ThreadPool_IsThreadPoolHosted (MonoError *error)
-{
-	return FALSE;
-}
+MONO_EMPTY_SOURCE_FILE (threadpool);

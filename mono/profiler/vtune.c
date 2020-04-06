@@ -32,6 +32,8 @@
 #include <mono/metadata/assembly.h>
 #include <mono/metadata/mono-debug.h>
 #include <mono/metadata/debug-internals.h>
+#include <mono/metadata/class-internals.h>
+#include <mono/utils/mono-publib.h>
 #include <string.h>
 #include <glib.h>
 
@@ -82,7 +84,7 @@ method_jit_done (MonoProfiler *prof, MonoMethod *method, MonoJitInfo* jinfo)
 	MonoDebugSourceLocation *sourceLoc;
 	MonoDebugMethodJitInfo *dmji;
 	MonoClass *klass = mono_method_get_class (method);
-	char *signature = mono_signature_get_desc (mono_method_signature (method), TRUE);
+	char *signature = mono_signature_get_desc (mono_method_signature_internal (method), TRUE);
 	char *name = g_strdup_printf ("%s(%s)", mono_method_get_name (method), signature);
 	char *classname = g_strdup_printf ("%s%s%s", m_class_get_name_space (klass), m_class_get_name_space (klass)[0] != 0 ? "::" : "", m_class_get_name (klass));
 	gpointer code_start = mono_jit_info_get_code_start (jinfo);
@@ -158,6 +160,9 @@ code_buffer_new (MonoProfiler *prof, void *buffer, int size, MonoProfilerCodeBuf
 		g_free (name);
 	}
 }
+
+MONO_API void
+mono_profiler_init_vtune (const char *desc);
 
 /* the entry point */
 void

@@ -153,7 +153,7 @@ typedef struct _ScanData {
 /* Should color be made visible to client even though it has no bridges?
  * True if we predict the number of reduced edges to be enough to justify the extra node.
  */
-static inline gboolean
+static gboolean
 bridgeless_color_is_heavy (ColorData *data) {
 	int fanin = data->incoming_colors;
 	int fanout = dyn_array_ptr_size (&data->other_colors);
@@ -162,7 +162,7 @@ bridgeless_color_is_heavy (ColorData *data) {
 }
 
 // Should color be made visible to client?
-static inline gboolean
+static gboolean
 color_visible_to_client (ColorData *data) {
 	return dyn_array_ptr_size (&data->bridges) || bridgeless_color_is_heavy (data);
 }
@@ -446,7 +446,7 @@ mix_hash (uintptr_t source)
 
 	// Mix in highest bits on 64-bit systems only
 	if (sizeof (source) > 4)
-		hash = hash ^ (source >> 32);
+		hash = hash ^ ((source >> 31) >> 1);
 
 	return hash;
 }
@@ -1233,5 +1233,11 @@ sgen_tarjan_bridge_init (SgenBridgeProcessor *collector)
 	g_assert (API_INDEX_BITS + INCOMING_COLORS_BITS <= 31);
 	bridge_processor = collector;
 }
+
+#else
+
+#include <mono/utils/mono-compiler.h>
+
+MONO_EMPTY_SOURCE_FILE (sgen_tarjan_bridge);
 
 #endif

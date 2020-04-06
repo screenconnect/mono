@@ -1,3 +1,6 @@
+# diff settings
+*.cs	diff=csharp
+
 # ensure LF endings on all checkouts
 configure.ac	crlf=input
 config.rpath	crlf=input
@@ -7,17 +10,18 @@ mkinstalldirs	crlf=input
 *.sources	crlf=input
 .gitattributes	crlf=input
 *akefile*	crlf=input
+m4/mono-output.m4	crlf=input
 
 # ensure native line endings on checkout
 *.c	crlf
 *.h	crlf
 *.cs	crlf
 *.il	crlf
+*.sln		crlf
+*.*proj*	crlf
 
-# don't do anything to line-endings.  Let CRLFs go into the repo, and CRLF on checkout
-*.bat	  	-crlf
-*.sln		-crlf
-*.*proj* 	-crlf
+# don't do anything to line-endings.  Let CRLFs/LFs go into the repo, and CRLF/LFs on checkout
+*.bat		-crlf
 *.xml 		-crlf
 
 # CRLF Handling

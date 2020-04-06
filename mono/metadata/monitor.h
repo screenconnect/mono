@@ -17,8 +17,6 @@
 #include <mono/utils/mono-coop-mutex.h>
 #include <mono/metadata/icalls.h>
 
-G_BEGIN_DECLS
-
 #define OWNER_MASK		0x0000ffff
 #define ENTRY_COUNT_MASK	0xffff0000
 #define ENTRY_COUNT_WAITERS	0x80000000
@@ -108,15 +106,19 @@ mono_monitor_init (void);
 void
 mono_monitor_cleanup (void);
 
+ICALL_EXTERN_C
 MonoBoolean
 mono_monitor_enter_internal (MonoObject *obj);
 
+ICALL_EXTERN_C
 void
 mono_monitor_enter_v4_internal (MonoObject *obj, MonoBoolean *lock_taken);
 
+ICALL_EXTERN_C
 guint32
 mono_monitor_enter_fast (MonoObject *obj);
 
+ICALL_EXTERN_C
 guint32
 mono_monitor_enter_v4_fast (MonoObject *obj, MonoBoolean *lock_taken);
 
@@ -128,34 +130,10 @@ mono_monitor_threads_sync_members_offset (int *status_offset, int *nest_offset);
 #define MONO_THREADS_SYNC_MEMBER_OFFSET(o)	((o)>>8)
 #define MONO_THREADS_SYNC_MEMBER_SIZE(o)	((o)&0xff)
 
+#if ENABLE_NETCORE
 ICALL_EXPORT
-MonoBoolean
-ves_icall_System_Threading_Monitor_Monitor_test_owner (MonoObject *obj);
-
-ICALL_EXPORT
-MonoBoolean
-ves_icall_System_Threading_Monitor_Monitor_test_synchronised (MonoObject *obj);
-
-ICALL_EXPORT
-void
-ves_icall_System_Threading_Monitor_Monitor_pulse (MonoObject *obj);
-
-ICALL_EXPORT
-void
-ves_icall_System_Threading_Monitor_Monitor_pulse_all (MonoObject *obj);
-
-ICALL_EXPORT
-MonoBoolean
-ves_icall_System_Threading_Monitor_Monitor_wait (MonoObject *obj, guint32 ms);
-
-ICALL_EXPORT
-void
-ves_icall_System_Threading_Monitor_Monitor_try_enter_with_atomic_var (MonoObject *obj, guint32 ms, MonoBoolean *lockTaken);
-
-ICALL_EXPORT
-void
-ves_icall_System_Threading_Monitor_Monitor_Enter (MonoObject *obj);
-
-G_END_DECLS
+gint64
+ves_icall_System_Threading_Monitor_Monitor_LockContentionCount (void);
+#endif
 
 #endif /* _MONO_METADATA_MONITOR_H_ */

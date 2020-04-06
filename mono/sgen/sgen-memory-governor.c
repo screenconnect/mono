@@ -22,6 +22,7 @@
 #include "mono/sgen/sgen-memory-governor.h"
 #include "mono/sgen/sgen-workers.h"
 #include "mono/sgen/sgen-client.h"
+#include "mono/utils/memfuncs.h"
 
 /*
  * The allowance we are targeting is a third of the current heap size. Still, we
@@ -72,7 +73,6 @@ static mword last_collection_los_memory_usage = 0;
 static mword last_used_slots_size = 0;
 
 static mword sgen_memgov_available_free_space (void);
-
 
 /* GC trigger heuristics. */
 
@@ -130,16 +130,18 @@ sgen_memgov_calculate_minor_collection_allowance (void)
 	}
 }
 
-static inline size_t
+static size_t
 get_heap_size (void)
 {
 	return sgen_major_collector.get_num_major_sections () * sgen_major_collector.section_size + sgen_los_memory_usage;
 }
 
 gboolean
-sgen_need_major_collection (mword space_needed)
+sgen_need_major_collection (mword space_needed, gboolean *forced)
 {
 	size_t heap_size;
+
+	*forced = FALSE;
 
 	if (sgen_get_concurrent_collection_in_progress ()) {
 		heap_size = get_heap_size ();
@@ -169,6 +171,7 @@ sgen_need_major_collection (mword space_needed)
 
 	heap_size = get_heap_size ();
 
+	*forced = heap_size > soft_heap_limit;
 	return heap_size > major_collection_trigger_size;
 }
 
@@ -232,6 +235,11 @@ sgen_memgov_major_post_sweep (mword used_slots_size)
 
 		sgen_add_log_entry (log_entry);
 	}
+
+	sgen_gc_info.heap_size_bytes = sgen_major_collector.get_num_major_sections () * sgen_major_collector.section_size + sgen_los_memory_usage_total;
+	sgen_gc_info.fragmented_bytes = sgen_gc_info.heap_size_bytes - sgen_los_memory_usage - (used_slots_size + sgen_total_allocated_major - total_allocated_major_end);
+	sgen_gc_info.memory_load_bytes = sgen_los_memory_usage + used_slots_size + sgen_total_allocated_major - total_allocated_major_end;
+
 	last_used_slots_size = used_slots_size;
 }
 
@@ -240,6 +248,8 @@ sgen_memgov_major_collection_start (gboolean concurrent, const char *reason)
 {
 	need_calculate_minor_collection_allowance = TRUE;
 	major_start_heap_size = get_heap_size ();
+
+	sgen_gc_info.high_memory_load_threshold_bytes = major_collection_trigger_size;
 
 	if (debug_print_allowance) {
 		SGEN_LOG (0, "Starting collection with heap size %ld bytes", (long)major_start_heap_size);
@@ -301,41 +311,41 @@ sgen_output_log_entry (SgenLogEntry *entry, gint64 stw_time, int generation)
 
 	switch (entry->type) {
 		case SGEN_LOG_NURSERY:
-			mono_trace (G_LOG_LEVEL_INFO, MONO_TRACE_GC, "GC_MINOR%s: (%s) time %.2fms, %s promoted %zdK major size: %zdK in use: %zdK los size: %zdK in use: %zdK",
+			mono_trace (G_LOG_LEVEL_INFO, MONO_TRACE_GC, "GC_MINOR%s: (%s) time %.2fms, %s promoted %luK major size: %luK in use: %luK los size: %luK in use: %luK",
 				entry->is_overflow ? "_OVERFLOW" : "",
 				entry->reason ? entry->reason : "",
 				entry->time / 10000.0f,
 				(generation == GENERATION_NURSERY) ? full_timing_buff : "",
-				entry->promoted_size / 1024,
-				entry->major_size / 1024,
-				entry->major_size_in_use / 1024,
-				entry->los_size / 1024,
-				entry->los_size_in_use / 1024);
+				(unsigned long)entry->promoted_size / 1024,
+				(unsigned long)entry->major_size / 1024,
+				(unsigned long)entry->major_size_in_use / 1024,
+				(unsigned long)entry->los_size / 1024,
+				(unsigned long)entry->los_size_in_use / 1024);
 			break;
 		case SGEN_LOG_MAJOR_SERIAL:
-			mono_trace (G_LOG_LEVEL_INFO, MONO_TRACE_GC, "GC_MAJOR%s: (%s) time %.2fms, %s los size: %zdK in use: %zdK",
+			mono_trace (G_LOG_LEVEL_INFO, MONO_TRACE_GC, "GC_MAJOR%s: (%s) time %.2fms, %s los size: %luK in use: %luK",
 				entry->is_overflow ? "_OVERFLOW" : "",
 				entry->reason ? entry->reason : "",
 				(int)entry->time / 10000.0f,
 				full_timing_buff,
-				entry->los_size / 1024,
-				entry->los_size_in_use / 1024);
+				(unsigned long)entry->los_size / 1024,
+				(unsigned long)entry->los_size_in_use / 1024);
 			break;
 		case SGEN_LOG_MAJOR_CONC_START:
 			mono_trace (G_LOG_LEVEL_INFO, MONO_TRACE_GC, "GC_MAJOR_CONCURRENT_START: (%s)", entry->reason ? entry->reason : "");
 			break;
 		case SGEN_LOG_MAJOR_CONC_FINISH:
-			mono_trace (G_LOG_LEVEL_INFO, MONO_TRACE_GC, "GC_MAJOR_CONCURRENT_FINISH: (%s) time %.2fms, %s los size: %zdK in use: %zdK",
+			mono_trace (G_LOG_LEVEL_INFO, MONO_TRACE_GC, "GC_MAJOR_CONCURRENT_FINISH: (%s) time %.2fms, %s los size: %luK in use: %luK",
 				entry->reason ? entry->reason : "",
 				entry->time / 10000.0f,
 				full_timing_buff,
-				entry->los_size / 1024,
-				entry->los_size_in_use / 1024);
+				(unsigned long)entry->los_size / 1024,
+				(unsigned long)entry->los_size_in_use / 1024);
 			break;
 		case SGEN_LOG_MAJOR_SWEEP_FINISH:
-			mono_trace (G_LOG_LEVEL_INFO, MONO_TRACE_GC, "GC_MAJOR_SWEEP: major size: %zdK in use: %zdK",
-				entry->major_size / 1024,
-				entry->major_size_in_use / 1024);
+			mono_trace (G_LOG_LEVEL_INFO, MONO_TRACE_GC, "GC_MAJOR_SWEEP: major size: %luK in use: %luK",
+				(unsigned long)entry->major_size / 1024,
+				(unsigned long)entry->major_size_in_use / 1024);
 			break;
 		default:
 			SGEN_ASSERT (0, FALSE, "Invalid log entry type");
@@ -355,7 +365,7 @@ sgen_memgov_collection_end (int generation, gint64 stw_time)
 		SGEN_ASSERT (0, !sgen_is_world_stopped (), "We can't log if the world is stopped");
 		mono_os_mutex_lock (&log_entries_mutex);
 		for (i = 0; i < log_entries.next_slot; i++) {
-			sgen_output_log_entry (log_entries.data [i], stw_time, generation);
+			sgen_output_log_entry ((SgenLogEntry*)log_entries.data [i], stw_time, generation);
 			sgen_free_internal (log_entries.data [i], INTERNAL_MEM_LOG_ENTRY);
 		}
 		sgen_pointer_queue_clear (&log_entries);
@@ -490,8 +500,15 @@ sgen_memgov_init (size_t max_heap, size_t soft_limit, gboolean debug_allowance, 
 
 	sgen_register_fixed_internal_mem_type (INTERNAL_MEM_LOG_ENTRY, sizeof (SgenLogEntry));
 
-	if (max_heap == 0)
+	if (max_heap == 0) {
+		sgen_gc_info.total_available_memory_bytes = mono_determine_physical_ram_size ();
+
+		if (!sgen_gc_info.total_available_memory_bytes){
+			SGEN_LOG(9, "Warning: Unable to determine physical ram size for GCMemoryInfo");
+		}
+
 		return;
+	}
 
 	if (max_heap < soft_limit) {
 		sgen_env_var_error (MONO_GC_PARAMS_NAME, "Setting to minimum.", "`max-heap-size` must be at least as large as `soft-heap-limit`.");
@@ -502,7 +519,9 @@ sgen_memgov_init (size_t max_heap, size_t soft_limit, gboolean debug_allowance, 
 		sgen_env_var_error (MONO_GC_PARAMS_NAME, "Setting to minimum.", "`max-heap-size` must be at least 4 times as large as `nursery size`.");
 		max_heap = SGEN_DEFAULT_NURSERY_SIZE * 4;
 	}
-	max_heap_size = max_heap - SGEN_DEFAULT_NURSERY_SIZE;
+	max_heap_size = max_heap;
+
+	sgen_gc_info.total_available_memory_bytes = max_heap;
 
 	if (allowance_ratio)
 		default_allowance_nursery_size_ratio = allowance_ratio;

@@ -1,4 +1,7 @@
 ../test-helpers/Configuration.Http.cs
+../test-helpers/Configuration.Certificates.cs
+../test-helpers/TestConfiguration.cs
+../test-helpers/NetworkStreamHelper.cs
 
 ../../../external/corefx/src/Common/tests/System/Threading/Tasks/TaskTimeoutExtensions.cs
 
@@ -8,6 +11,15 @@ System/RemoteExecutorTests.cs
 ../../../external/corefx/src/Common/tests/System/Collections/IEnumerable.NonGeneric.Tests.cs
 ../../../external/corefx/src/Common/tests/System/Collections/IList.NonGeneric.Tests.cs
 ../../../external/corefx/src/Common/tests/System/Collections/TestBase.NonGeneric.cs
+../../../external/corefx/src/Common/tests/System/IO/DelegateStream.cs
+../../../external/corefx/src/Common/tests/System/Net/Capability.Security.cs
+../../../external/corefx/src/Common/tests/System/Net/Configuration.cs
+../../../external/corefx/src/Common/tests/System/Net/Configuration.Security.cs
+../../../external/corefx/src/Common/tests/System/Net/HttpsTestClient.cs
+../../../external/corefx/src/Common/tests/System/Net/HttpsTestServer.cs
+../../../external/corefx/src/Common/tests/System/Net/SslStreamCertificatePolicy.cs
+../../../external/corefx/src/Common/tests/System/Net/VirtualNetwork/*.cs
+../../../external/corefx/src/Common/tests/System/Net/WebSockets/WebSocketCreateTest.cs
 ../../../external/corefx/src/Common/tests/System/Runtime/Serialization/Formatters/BinaryFormatterHelpers.cs
 
 # System.CodeDom
@@ -26,7 +38,7 @@ System/RemoteExecutorTests.cs
 ../../../external/corefx/src/Common/tests/System/Net/Http/LoopbackServer.cs
 ../../../external/corefx/src/Common/tests/System/Net/Configuration.cs
 ../../../external/corefx/src/Common/tests/System/Net/Configuration.Http.cs
-../../../external/corefx/src/Common/tests/System/Net/Configuration.Certificates.cs
+../../../external/corefx/src/Common/tests/System/Net/Configuration.WebSockets.cs
 ../../../external/corefx/src/System.Net.Requests/tests/FtpWebRequestTest.cs
 #../../../external/corefx/src/System.Net.Requests/tests/*.cs:AuthenticationManagerTest.cs
 
@@ -46,8 +58,11 @@ System/RemoteExecutorTests.cs
 ../../../external/corefx/src/System.Net.Security/tests/UnitTests/Fakes/*.cs:FakeSslState.cs,FakeLazyAsyncResult.cs
 ../../../external/corefx/src/Common/src/System/Net/Logging/NetEventSource.Common.cs
 ../../../external/corefx/src/Common/src/System/Net/InternalException.cs
+../../../external/corefx/src/System.Net.Security/src/System/Net/Security/SniHelper.cs
 ../../../external/corefx/src/System.Net.Security/src/System/Net/Security/TlsAlertMessage.cs
 ../../../external/corefx/src/System.Net.Security/src/System/Net/Security/TlsAlertType.cs
+
+../../../external/corefx/src/System.Net.Security/tests/FunctionalTests/*.cs:IdentityValidator.Windows.cs,NegotiateStreamTest.Linux.cs,TestConfiguration.cs,UnixGssFakeNegotiateStream.cs,UnixGssFakeStreamFramer.cs
 
 # System.Net.Ping
 ../../../external/corefx/src/Common/src/System/Net/NetworkInformation/UnixCommandLinePing.cs
@@ -82,6 +97,8 @@ System/RemoteExecutorTests.cs
 ../../../external/corefx/src/Common/tests/System/Net/Sockets/SocketTestServerAPM.cs
 ../../../external/corefx/src/Common/tests/System/Net/Sockets/SocketTestServerAsync.cs
 ../../../external/corefx/src/Common/tests/System/Net/Sockets/TestSettings.cs
+../../../external/corefx/src/System.Net.Sockets/tests/FunctionalTests/NetworkStreamTest.cs
+../../../external/corefx/src/System.Net.Sockets/tests/FunctionalTests/NetworkStreamTest.netcoreapp.cs
 #../../../external/corefx/src/System.Net.Sockets/tests/FunctionalTests/*.cs:NetworkStreamTest.netcoreapp.cs,SocketTestHelper.netcoreapp.cs,SendReceive.netcoreapp.cs,SocketAsyncEventArgsTest.cs,LoggingTest.cs,SendReceive.cs
 
 # System.Net.Primitives
@@ -96,6 +113,9 @@ System/RemoteExecutorTests.cs
 
 # System.IO.FileSystemWatcher
 ../../../external/corefx/src/System.IO.FileSystem.Watcher/tests/Utility/*.cs
+../../../external/corefx/src/System.IO.FileSystem.Watcher/tests/Args.ErrorEventArgs.cs
+../../../external/corefx/src/System.IO.FileSystem.Watcher/tests/Args.FileSystemEventArgs.cs
+../../../external/corefx/src/System.IO.FileSystem.Watcher/tests/Args.RenamedEventArgs.cs
 ../../../external/corefx/src/System.IO.FileSystem.Watcher/tests/FileSystemWatcher.cs
 ../../../external/corefx/src/System.IO.FileSystem.Watcher/tests/FileSystemWatcher.unit.cs
 ../../../external/corefx/src/Common/tests/System/IO/TempFile.cs

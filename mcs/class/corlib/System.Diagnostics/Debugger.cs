@@ -40,7 +40,6 @@ namespace System.Diagnostics
 	/// Enables communication with a debugger.
 	/// </summary>
 	[ComVisible (true)]
-	[MonoTODO ("The Debugger class is not functional")]
 	public sealed class Debugger
 	{
 
@@ -83,7 +82,6 @@ namespace System.Diagnostics
 		/// <summary>
 		/// Launches and attaches a debugger to the process.
 		/// </summary>
-		[MonoTODO ("Not implemented")]
 		public static bool Launch()
 		{
 			throw new NotImplementedException();
@@ -102,7 +100,12 @@ namespace System.Diagnostics
 		/// A string representing the message to show.
 		/// </param>
 		[MethodImplAttribute(MethodImplOptions.InternalCall)]
-		public static extern void Log(int level, string category, string message);
+		static extern void Log_icall (int level, ref string category, ref string message);
+
+		public static void Log (int level, string category, string message)
+		{
+			Log_icall (level, ref category, ref message);
+		}
 
 		public static void NotifyOfCrossThreadDependency ()
 		{

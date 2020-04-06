@@ -36,6 +36,7 @@
 #endif
 
 #include "utils/mono-logger-internals.h"
+#include "icall-decl.h"
 
 #ifndef MAXPATHLEN
 #define MAXPATHLEN 242
@@ -76,9 +77,11 @@ mono_w32process_get_name (pid_t pid)
 #else
 	memset (buf, '\0', sizeof(buf));
 	filename = g_strdup_printf ("/proc/%d/exe", pid);
+#if defined(HAVE_READLINK)
 	if (readlink (filename, buf, 255) > 0) {
 		ret = g_strdup (buf);
 	}
+#endif
 	g_free (filename);
 
 	if (ret != NULL) {
@@ -190,7 +193,7 @@ mono_w32process_get_modules (pid_t pid)
 			mod = g_new0 (MonoW32ProcessModule, 1);
 			mod->address_start = module.pr_vaddr;
 			mod->address_end = module.pr_vaddr + module.pr_size;
-			mod->address_offset = module.pr_off;
+			mod->address_offset = (void*)module.pr_off;
 			mod->perms = g_strdup ("r--p"); /* XXX? */
 
 			/* AIX has what appears to be device, channel and inode information,
@@ -319,8 +322,13 @@ mono_w32process_get_modules (pid_t pid)
 		if (!g_ascii_isspace (*p)) {
 			continue;
 		}
-
+#if defined(MAJOR_IN_MKDEV) || defined(MAJOR_IN_SYSMACROS)
 		device = makedev ((int)maj_dev, (int)min_dev);
+#else
+		(void)maj_dev;
+		(void)min_dev;
+		device = 0;
+#endif
 		if ((device == 0) && (inode == 0)) {
 			continue;
 		}

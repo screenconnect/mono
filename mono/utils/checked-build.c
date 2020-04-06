@@ -19,6 +19,7 @@
 #include <mono/metadata/mempool.h>
 #include <mono/metadata/metadata-internals.h>
 #include <mono/metadata/image-internals.h>
+#include <mono/metadata/loaded-images-internals.h>
 #include <mono/metadata/class-internals.h>
 #include <mono/metadata/reflection-internals.h>
 #include <glib.h>
@@ -134,7 +135,7 @@ backtrace_mutex_unlock (void)
 static CheckState*
 get_state (void)
 {
-	CheckState *state = mono_native_tls_get_value (thread_status);
+	CheckState *state = (CheckState*)mono_native_tls_get_value (thread_status);
 	if (!state) {
 		state = (CheckState*) g_malloc0 (sizeof (CheckState) + sizeof(ThreadTransition) * MAX_TRANSITIONS);
 		mono_native_tls_set_value (thread_status, state);
@@ -143,14 +144,14 @@ get_state (void)
 	return state;
 }
 
-static inline void
+static void
 ringbuf_unpack (gint32 ringbuf, guint16 *buf_start, guint16 *buf_end)
 {
 	*buf_start = (guint16) (ringbuf >> 16);
 	*buf_end = (guint16) (ringbuf & 0x00FF);
 }
 
-static inline gint32
+static gint32
 ringbuf_pack (guint16 buf_start, guint16 buf_end)
 {
 	return ((((gint32)buf_start) << 16) | ((gint32)buf_end));
@@ -288,7 +289,7 @@ checked_build_thread_transition (const char *transition, void *info, int from_st
 		return;
 
 	/* We currently don't record external changes as those are hard to reason about. */
-	if (!mono_thread_info_is_current (info))
+	if (!mono_thread_info_is_current ((THREAD_INFO_TYPE*)info))
 		return;
 
 	CheckState *state = get_state ();
@@ -360,14 +361,15 @@ assert_gc_safe_mode (const char *file, int lineno)
 		return;
 
 	MonoThreadInfo *cur = mono_thread_info_current ();
-	int state;
 
 	if (!cur)
 		mono_fatal_with_history ("%s:%d: Expected GC Safe mode but thread is not attached", file, lineno);
 
-	switch (state = mono_thread_info_current_state (cur)) {
+	int state = mono_thread_info_current_state (cur);
+	switch (state) {
 	case STATE_BLOCKING:
 	case STATE_BLOCKING_SELF_SUSPENDED:
+	case STATE_BLOCKING_SUSPEND_REQUESTED:
 		break;
 	default:
 		mono_fatal_with_history ("%s:%d: Expected GC Safe mode but was in %s state", file, lineno, mono_thread_state_name (state));
@@ -381,12 +383,12 @@ assert_gc_unsafe_mode (const char *file, int lineno)
 		return;
 
 	MonoThreadInfo *cur = mono_thread_info_current ();
-	int state;
 
 	if (!cur)
 		mono_fatal_with_history ("%s:%d: Expected GC Unsafe mode but thread is not attached", file, lineno);
 
-	switch (state = mono_thread_info_current_state (cur)) {
+	int state = mono_thread_info_current_state (cur);
+	switch (state) {
 	case STATE_RUNNING:
 	case STATE_ASYNC_SUSPEND_REQUESTED:
 		break;
@@ -402,16 +404,17 @@ assert_gc_neutral_mode (const char *file, int lineno)
 		return;
 
 	MonoThreadInfo *cur = mono_thread_info_current ();
-	int state;
 
 	if (!cur)
 		mono_fatal_with_history ("%s:%d: Expected GC Neutral mode but thread is not attached", file, lineno);
 
-	switch (state = mono_thread_info_current_state (cur)) {
+	int state = mono_thread_info_current_state (cur);
+	switch (state) {
 	case STATE_RUNNING:
 	case STATE_ASYNC_SUSPEND_REQUESTED:
 	case STATE_BLOCKING:
 	case STATE_BLOCKING_SELF_SUSPENDED:
+	case STATE_BLOCKING_SUSPEND_REQUESTED:
 		break;
 	default:
 		mono_fatal_with_history ("%s:%d: Expected GC Neutral mode but was in %s state", file, lineno, mono_thread_state_name (state));
@@ -573,7 +576,7 @@ check_image_may_reference_image(MonoImage *from, MonoImage *to)
 		int current_idx;
 		for(current_idx = 0; current_idx < current->len; current_idx++)
 		{
-			MonoImage *checking = g_ptr_array_index (current, current_idx); // CAST?
+			MonoImage *checking = (MonoImage*)g_ptr_array_index (current, current_idx);
 
 			mono_image_lock (checking);
 

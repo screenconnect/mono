@@ -218,9 +218,13 @@ namespace Mono.Options
 				int start = 0, end;
 				do {
 					end = GetLineEnd (start, width, self);
-					char c = self [end-1];
+					// endCorrection is 1 if the line end is '\n', and might be 2 if the line end is '\r\n'.
+					int endCorrection = 1;
+					if (end >= 2 && self.Substring (end - 2, 2).Equals ("\r\n"))
+						endCorrection = 2;
+					char c = self [end - endCorrection];
 					if (char.IsWhiteSpace (c))
-						--end;
+						end -= endCorrection;
 					bool needContinuation = end != self.Length && !IsEolChar (c);
 					string continuation = "";
 					if (needContinuation) {
@@ -231,7 +235,7 @@ namespace Mono.Options
 					yield return line;
 					start = end;
 					if (char.IsWhiteSpace (c))
-						++start;
+						start += endCorrection;
 					width = GetNextWidth (ewidths, width, ref hw);
 				} while (start < self.Length);
 			}
@@ -262,6 +266,8 @@ namespace Mono.Options
 			int end = System.Math.Min (start + length, description.Length);
 			int sep = -1;
 			for (int i = start; i < end; ++i) {
+				if (i + 2 <= description.Length && description.Substring (i, 2).Equals ("\r\n"))
+					return i+2;
 				if (description [i] == '\n')
 					return i+1;
 				if (IsEolChar (description [i]))
@@ -1782,6 +1788,53 @@ namespace Mono.Options
 			return false;
 		}
 
+		public IEnumerable<string> GetCompletions (string prefix = null)
+		{
+			string rest;
+			ExtractToken (ref prefix, out rest);
+
+			foreach (var command in this) {
+				if (command.Name.StartsWith (prefix, StringComparison.OrdinalIgnoreCase)) {
+					yield return command.Name;
+				}
+			}
+
+			if (NestedCommandSets == null)
+				yield break;
+
+			foreach (var subset in NestedCommandSets) {
+				if (subset.Suite.StartsWith (prefix, StringComparison.OrdinalIgnoreCase)) {
+					foreach (var c in subset.GetCompletions (rest)) {
+						yield return $"{subset.Suite} {c}";
+					}
+				}
+			}
+		}
+
+		static void ExtractToken (ref string input, out string rest)
+		{
+			rest      = "";
+			input     = input ?? "";
+
+			int top   = input.Length;
+			for (int i = 0; i < top; i++) {
+				if (char.IsWhiteSpace (input [i]))
+					continue;
+
+				for (int j = i; j < top; j++) {
+					if (char.IsWhiteSpace (input [j])) {
+						rest  = input.Substring (j).Trim ();
+						input = input.Substring (i, j).Trim ();
+						return;
+					}
+				}
+				rest  = "";
+				if (i != 0)
+					input = input.Substring (i).Trim ();
+				return;
+			}
+		}
+
 		public int Run (IEnumerable<string> arguments)
 		{
 			if (arguments == null)
@@ -1879,7 +1932,6 @@ namespace Mono.Options
 		public override int Invoke (IEnumerable<string> arguments)
 		{
 			var extra   = new List<string> (arguments ?? new string [0]);
-			Console.WriteLine ($"# HelpCommand.Invoke: arguments={string.Join (" ", arguments)}");
 			var _       = CommandSet.Options.MessageLocalizer;
 			if (extra.Count == 0) {
 				CommandSet.Options.WriteOptionDescriptions (CommandSet.Out);
