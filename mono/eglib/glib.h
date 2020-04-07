@@ -1181,67 +1181,24 @@ gchar *g_mkdtemp (gchar *tmpl);
 /*
  * Low-level write-based printing functions
  */
-static inline gint
-g_async_safe_vfprintf (int handle, gchar const *format, va_list args)
-{
-	char print_buff [1024];
-	print_buff [0] = '\0';
-	g_vsnprintf (print_buff, sizeof(print_buff), format, args);
-	int ret = g_write (handle, print_buff, (guint32) strlen (print_buff));
-
-	return ret;
-}
-
-static inline gint
-g_async_safe_fprintf (int handle, gchar const *format, ...)
-{
-	va_list args;
-	va_start (args, format);
-	int ret = g_async_safe_vfprintf (handle, format, args);
-	va_end (args);
-	return ret;
-}
-
-static inline gint
-g_async_safe_vprintf (gchar const *format, va_list args)
-{
-	return g_async_safe_vfprintf (1, format, args);
-}
-
-static inline gint
-g_async_safe_printf (gchar const *format, ...)
-{
-	va_list args;
-	va_start (args, format);
-	int ret = g_async_safe_vfprintf (1, format, args);
-	va_end (args);
-
-	return ret;
-}
-
-
-/*
- * Low-level write-based printing functions
- */
-
 static inline int
-g_async_safe_fgets (char *str, int num, int handle, gboolean *newline)
+g_async_safe_fgets(char* str, int num, int handle, gboolean* newline)
 {
-	memset (str, 0, num);
+	memset(str, 0, num);
 	// Make sure we don't overwrite the last index so that we are
 	// guaranteed to be NULL-terminated
 	int without_padding = num - 1;
-	int i=0;
-	while (i < without_padding && g_read (handle, &str [i], sizeof(char))) {
-		if (str [i] == '\n') {
-			str [i] = '\0';
+	int i = 0;
+	while (i < without_padding && g_read(handle, &str[i], sizeof(char))) {
+		if (str[i] == '\n') {
+			str[i] = '\0';
 			*newline = TRUE;
 		}
-		
-		if (!isprint (str [i]))
-			str [i] = '\0';
 
-		if (str [i] == '\0')
+		if (!isprint(str[i]))
+			str[i] = '\0';
+
+		if (str[i] == '\0')
 			break;
 
 		i++;
@@ -1287,7 +1244,6 @@ g_async_safe_printf (gchar const *format, ...)
 
 	return ret;
 }
-
 
 /*
  * Pattern matching

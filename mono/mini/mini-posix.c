@@ -1037,7 +1037,6 @@ dump_native_stacktrace (const char *signal, MonoContext *mctx)
 			// Returns success, so leave if !success
 			leave = !mono_threads_summarize (passed_ctx, &output, &hashes, FALSE, TRUE, (gchar *) merp_mem.mem, mono_max_summary_len);
 		}
-#endif // DISABLE_CRASH_REPORTING
 
 		if (!leave) {
 			// Wait for the other threads to clean up and exit their handlers

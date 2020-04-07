@@ -1348,9 +1348,6 @@ interp_handle_intrinsics (TransformData *td, MonoMethod *target_method, MonoClas
 				case 1:
 					interp_add_ins (td, MINT_CONV_I8_U4);
 					break;
-				case 1:
-					ADD_CODE (td, MINT_CONV_I8_U4);
-					break;
 				case 2:
 					interp_add_ins (td, MINT_CONV_R8_R4);
 					break;
@@ -1434,9 +1431,6 @@ interp_handle_intrinsics (TransformData *td, MonoMethod *target_method, MonoClas
 					break;
 				case 1:
 					interp_add_ins (td, MINT_CONV_I8_U4);
-					break;
-				case 1:
-					ADD_CODE (td, MINT_CONV_I8_U4);
 					break;
 				case 2:
 					interp_add_ins (td, MINT_CONV_R8_R4);
@@ -4440,9 +4434,6 @@ generate_code (TransformData *td, MonoMethod *method, MonoMethodHeader *header, 
 			case STACK_TYPE_R4:
 				/* no-op */
 				break;
-			case STACK_TYPE_R4:
-				/* no-op */
-				break;
 			default:
 				g_assert_not_reached ();
 			}
@@ -4460,9 +4451,6 @@ generate_code (TransformData *td, MonoMethod *method, MonoMethodHeader *header, 
 				break;
 			case STACK_TYPE_R4:
 				interp_add_ins (td, MINT_CONV_R8_R4);
-				break;
-			case STACK_TYPE_R4:
-				ADD_CODE (td, MINT_CONV_R8_R4);
 				break;
 			case STACK_TYPE_R8:
 				break;

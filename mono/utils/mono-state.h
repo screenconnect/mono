@@ -94,33 +94,6 @@ mono_summarize_native_state_add_thread (MonoStateWriter *writer, MonoThreadSumma
 void
 mono_state_writer_init (MonoStateWriter *writer, gchar *output_str, int len);
 
-// Logging
-gboolean
-mono_summarize_set_timeline_dir (const char *directory);
-
-void
-mono_summarize_timeline_start (void);
-
-void
-mono_summarize_timeline_phase_log (MonoSummaryStage stage);
-
-void
-mono_summarize_double_fault_log (void);
-
-MonoSummaryStage
-mono_summarize_timeline_read_level (const char *directory, gboolean clear);
-
-// Enable checked-build assertions on summary workflow
-// Turns all potential hangs into instant faults
-void
-mono_summarize_toggle_assertions (gboolean enable);
-
-// Json State Writer
-
-/*
- * These use static memory, can only be called once
- */
-
 void
 mono_native_state_init (MonoStateWriter *writer);
 
@@ -162,20 +135,4 @@ mono_dump_start (void);
 gboolean
 mono_dump_complete (void);
 
-void
-mono_native_state_add_thread (MonoStateWriter *writer, MonoThreadSummary *thread, MonoContext *ctx, gboolean first_thread, gboolean crashing_thread);
-
-void
-mono_crash_dump (const char *jsonFile, MonoStackHash *hashes);
-
-// Signal-safe file allocators
-
-gboolean
-mono_state_alloc_mem (MonoStateMem *mem, long tag, size_t size);
-
-void
-mono_state_free_mem (MonoStateMem *mem);
-
-MONO_END_DECLS
-#endif // DISABLE_CRASH_REPORTING
 #endif // MONO_UTILS_NATIVE_STATE

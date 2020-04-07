@@ -537,14 +537,7 @@ typedef struct {
 	MonoBoolean debug_info;
 } MonoStackTrace;
 
-TYPED_HANDLE_DECL (MonoStackTrace);
-
-typedef struct {
-	MonoObject obj;
-	MonoArray *frames;
-	MonoArray *captured_traces;
-	MonoBoolean debug_info;
-} MonoStackTrace;
+TYPED_HANDLE_DECL(MonoStackTrace);
 
 typedef struct {
 	MonoObject obj;

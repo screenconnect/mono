@@ -7800,44 +7800,6 @@ mono_test_init_symbols (void)
 static jmp_buf test_jmp_buf;
 static guint32 test_gchandle;
 
-typedef long long MonoObject;
-typedef MonoObject MonoException;
-typedef int32_t mono_bool;
-
-static int sym_inited = 0;
-static void (*sym_mono_install_ftnptr_eh_callback) (MonoFtnPtrEHCallback);
-static MonoObject* (*sym_mono_gchandle_get_target) (guint32 gchandle);
-static guint32 (*sym_mono_gchandle_new) (MonoObject *, mono_bool pinned);
-static void (*sym_mono_gchandle_free) (guint32 gchandle);
-static void (*sym_mono_raise_exception) (MonoException *ex);
-static void (*sym_mono_domain_unload) (gpointer);
-static void (*sym_mono_threads_exit_gc_safe_region_unbalanced) (gpointer, gpointer *);
-static void (*null_function_ptr) (void);
-
-static void
-mono_test_init_symbols (void)
-{
-	if (sym_inited)
-		return;
-
-	sym_mono_install_ftnptr_eh_callback = (void (*) (MonoFtnPtrEHCallback)) (lookup_mono_symbol ("mono_install_ftnptr_eh_callback"));
-
-	sym_mono_gchandle_get_target = (MonoObject* (*) (guint32 gchandle)) (lookup_mono_symbol ("mono_gchandle_get_target"));
-
-	sym_mono_gchandle_new = (guint32 (*) (MonoObject *, mono_bool)) (lookup_mono_symbol ("mono_gchandle_new"));
-
-	sym_mono_gchandle_free = (void (*) (guint32 gchandle)) (lookup_mono_symbol ("mono_gchandle_free"));
-
-	sym_mono_raise_exception = (void (*) (MonoException *)) (lookup_mono_symbol ("mono_raise_exception"));
-
-	sym_mono_domain_unload = (void (*) (gpointer)) (lookup_mono_symbol ("mono_domain_unload"));
-
-	sym_mono_threads_exit_gc_safe_region_unbalanced = (void (*) (gpointer, gpointer *)) (lookup_mono_symbol ("mono_threads_exit_gc_safe_region_unbalanced"));
-
-	sym_inited = 1;
-}
-
-
 static void
 mono_test_longjmp_callback (guint32 gchandle)
 {

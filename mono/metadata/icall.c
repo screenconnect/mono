@@ -9168,12 +9168,6 @@ mono_add_internal_call_internal (const char *name, gconstpointer method)
 	mono_add_internal_call_with_flags (name, method, TRUE);
 }
 
-void
-mono_add_internal_call_internal (const char *name, gconstpointer method)
-{
-	mono_add_internal_call_with_flags (name, method, TRUE);
-}
-
 /* 
  * we should probably export this as an helper (handle nested types).
  * Returns the number of chars written in buf.
@@ -9292,15 +9286,6 @@ mono_lookup_internal_call_full_with_flags (MonoMethod *method, gboolean warn_on_
 		res = value->method;
 		goto exit;
 	}
-	res = g_hash_table_lookup (icall_hash_foreign, mname);
-	if (res) {
-		if (foreign)
-			*foreign = TRUE;
-		g_free (classname);
-		mono_icall_unlock ();
-		return res;
-	}
-
 
 	if (!icall_table) {
 		/* Fail only when the result is actually used */

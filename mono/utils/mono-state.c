@@ -8,8 +8,6 @@
  * (C) 2018 Microsoft, Inc.
  *
  */
-#ifndef DISABLE_CRASH_REPORTING
-
 #include <config.h>
 #include <glib.h>
 #include <mono/utils/mono-state.h>
@@ -151,14 +149,6 @@ file_for_stage_breadcrumb (const char *directory, MonoSummaryStage stage, gchar 
 {
 	g_snprintf (buff, sizeof_buff, "%s%scrash_stage_%d", directory, G_DIR_SEPARATOR_S, stage);
 }
-
-typedef struct {
-	const char *directory;
-	MonoSummaryStage level;
-} MonoSummaryTimeline;
-
-static const char *configured_timeline_dir;
-static MonoSummaryTimeline log;
 
 static void
 file_for_dump_reason_breadcrumb (const char *directory, const char *dump_reason, gchar *buff, size_t sizeof_buff)

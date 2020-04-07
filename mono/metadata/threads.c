@@ -3982,20 +3982,6 @@ collect_thread (gpointer key, gpointer value, gpointer user)
 		ud->threads [ud->nthreads ++] = mono_gchandle_new_internal (&thread->obj, TRUE);
 }
 
-static void
-collect_thread_id (gpointer key, gpointer value, gpointer user)
-{
-	CollectThreadIdsUserData *ud = (CollectThreadIdsUserData *)user;
-	MonoInternalThread *thread = (MonoInternalThread *)value;
-
-	if (ud->nthreads < ud->max_threads)
-		ud->threads [ud->nthreads ++] = thread_get_tid (thread);
-}
-
-/*
- * Collect running threads into the THREADS array.
- * THREADS should be an array allocated on the stack.
- */
 static int
 collect_threads (guint32 *thread_handles, int max_threads)
 {
@@ -6627,8 +6613,6 @@ mono_threads_summarize_execute_internal (MonoContext *ctx, gchar **out, MonoStac
 		// for the dumper
 		summarizer_state_wait (this_thread);
 	}
-	*out = mono_summarize_native_state_end (&writer);
-	mono_summarize_timeline_phase_log (MonoSummaryStateWriterDone);
 
 	// FIXME: How many threads should be counted?
 	if (hashes)

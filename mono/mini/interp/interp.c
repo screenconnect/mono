@@ -4977,10 +4977,6 @@ main_loop:
 #endif
 			++ip;
 			MINT_IN_BREAK;
-		MINT_IN_CASE(MINT_CONV_U8_R4)
-			sp [-1].data.l = (guint64) sp [-1].data.f_r4;
-			++ip;
-			MINT_IN_BREAK;
 		MINT_IN_CASE(MINT_CONV_U8_R8)
 #ifdef MONO_ARCH_EMULATE_FCONV_TO_U8
 			sp [-1].data.l = mono_fconv_u8_2 (sp [-1].data.f);
@@ -5746,12 +5742,6 @@ main_loop:
 		MINT_IN_CASE(MINT_CONV_OVF_U8_R4)
 			if (sp [-1].data.f_r4 < 0 || sp [-1].data.f_r4 > G_MAXUINT64 || isnan (sp [-1].data.f_r4))
 				goto overflow_label;
-			sp [-1].data.l = (guint64)sp [-1].data.f_r4;
-			++ip;
-			MINT_IN_BREAK;
-		MINT_IN_CASE(MINT_CONV_OVF_U8_R4)
-			if (sp [-1].data.f_r4 < 0 || sp [-1].data.f_r4 > G_MAXUINT64 || isnan (sp [-1].data.f_r4))
-				THROW_EX (mono_get_exception_overflow (), ip);
 			sp [-1].data.l = (guint64)sp [-1].data.f_r4;
 			++ip;
 			MINT_IN_BREAK;
