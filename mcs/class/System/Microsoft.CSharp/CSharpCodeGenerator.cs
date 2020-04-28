@@ -60,9 +60,9 @@ namespace Microsoft.CSharp
 			// FIXME: these lines had better be platform independent.
 			if (Path.DirectorySeparatorChar == '\\') {
 				mcs.StartInfo.FileName = MonoToolsLocator.Mono;
-				mcs.StartInfo.Arguments = "\"" + MonoToolsLocator.McsCSharpCompiler + "\" ";
+				mcs.StartInfo.Arguments = "\"" + MonoToolsLocator.CSharpCompiler + "\" ";
 			} else {
-				mcs.StartInfo.FileName = MonoToolsLocator.McsCSharpCompiler;
+				mcs.StartInfo.FileName = MonoToolsLocator.CSharpCompiler;
 			}
 
 			mcs.StartInfo.Arguments += BuildArgs (options, fileNames, _provOptions);
