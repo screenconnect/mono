@@ -408,8 +408,7 @@ namespace System.Web.UI
 
 		Assembly GetAssemblyFromSource (string vpath, ILocation location)
 		{
-			vpath = UrlUtils.Combine (BaseVirtualDir, vpath);
-			string realPath = context.Request.MapPath (vpath);
+			string realPath =  UrlUtils.Combine(Path.GetDirectoryName(location.Filename),vpath);
 			if (!File.Exists (realPath))
 				throw new ParseException (location, "File " + vpath + " not found");
 
