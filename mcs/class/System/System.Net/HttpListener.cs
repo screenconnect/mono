@@ -348,6 +348,7 @@ namespace System.Net {
 			if (disposed)
 				return;
 
+			listening = false;
 			Close (true); //TODO: Should we force here or not?
 			disposed = true;
 		}
