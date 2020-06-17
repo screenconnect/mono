@@ -213,6 +213,7 @@ namespace System.Net {
 
 		void Close (bool force)
 		{
+			listening = false;
 			CheckDisposed ();
 			EndPointManager.RemoveListener (this);
 			Cleanup (force);
