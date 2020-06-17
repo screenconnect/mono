@@ -213,6 +213,7 @@ namespace System.Net {
 
 		void Close (bool force)
 		{
+			listening = false;
 			CheckDisposed ();
 			EndPointManager.RemoveListener (this);
 			Cleanup (force);
@@ -348,7 +349,6 @@ namespace System.Net {
 			if (disposed)
 				return;
 
-			listening = false;
 			Close (true); //TODO: Should we force here or not?
 			disposed = true;
 		}
